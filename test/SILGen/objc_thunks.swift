@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name objc_thunks -Xllvm -sil-full-demangle -Xllvm -sil-print-debuginfo -sdk %S/Inputs -I %S/Inputs -enable-source-import %s -emit-silgen -emit-verbose-sil -enable-sil-ownership | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name objc_thunks -Xllvm -sil-full-demangle -Xllvm -sil-print-debuginfo -sdk %S/Inputs -I %S/Inputs -enable-source-import %s -emit-verbose-sil -enable-sil-ownership | %FileCheck %s
 
 // REQUIRES: objc_interop
 
@@ -17,8 +17,8 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref objc_thunks.Hoozit.typical
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC7typical_1ySo5GizmoCSi_AGtF : $@convention(method) (Int, @guaranteed Gizmo, @guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[X]], [[BORROWED_Y_COPY]], [[BORROWED_THIS_COPY]]) {{.*}} line:[[@LINE-9]]:14:auto_gen
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
-  // CHECK-NEXT:   end_borrow [[BORROWED_Y_COPY]] from [[Y_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_Y_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]] : $Hoozit
   // CHECK-NEXT:   destroy_value [[Y_COPY]]
   // CHECK-NEXT:   return [[RES]] : $Gizmo{{.*}} line:[[@LINE-14]]:14:auto_gen
@@ -32,7 +32,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC4forkyyF : $@convention(method) (@guaranteed Hoozit) -> ()
   // CHECK-NEXT:   apply [[NATIVE]]([[BORROWED_THIS]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS]] from [[THIS]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS]]
   // CHECK-NEXT:   destroy_value [[THIS]]
   // CHECK-NEXT:   return
   // CHECK-NEXT: }
@@ -59,7 +59,37 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC7copyFooSo5GizmoCyF : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
+  // CHECK-NEXT:   destroy_value [[THIS_COPY]]
+  // CHECK-NEXT:   return [[RES]]
+  // CHECK-NEXT: }
+
+  // NS_RETURNS_RETAINED by family (-mutableCopy)
+  @objc func mutableCopyFoo() -> Gizmo { return self }
+  // CHECK-LABEL: sil hidden [thunk] @$S11objc_thunks6HoozitC14mutableCopyFooSo5GizmoCyFTo : $@convention(objc_method) (Hoozit) -> @owned Gizmo
+  // CHECK: bb0([[THIS:%.*]] : @unowned $Hoozit):
+  // CHECK-NEXT:   [[THIS_COPY:%.*]] = copy_value [[THIS]]
+  // CHECK-NEXT:   [[BORROWED_THIS_COPY:%.*]] = begin_borrow [[THIS_COPY]]
+  // CHECK-NEXT:   // function_ref
+  // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC14mutableCopyFooSo5GizmoCyF : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
+  // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
+  // CHECK-NEXT:   destroy_value [[THIS_COPY]]
+  // CHECK-NEXT:   return [[RES]]
+  // CHECK-NEXT: }
+
+  // NS_RETURNS_RETAINED by family (-copy). This is different from Swift's
+  // normal notion of CamelCase, but it's what Clang does, so we should match 
+  // it.
+  @objc func copy8() -> Gizmo { return self }
+  // CHECK-LABEL: sil hidden [thunk] @$S11objc_thunks6HoozitC5copy8So5GizmoCyFTo : $@convention(objc_method) (Hoozit) -> @owned Gizmo
+  // CHECK: bb0([[THIS:%.*]] : @unowned $Hoozit):
+  // CHECK-NEXT:   [[THIS_COPY:%.*]] = copy_value [[THIS]]
+  // CHECK-NEXT:   [[BORROWED_THIS_COPY:%.*]] = begin_borrow [[THIS_COPY]]
+  // CHECK-NEXT:   // function_ref
+  // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC5copy8So5GizmoCyF : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
+  // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return [[RES]]
   // CHECK-NEXT: }
@@ -73,7 +103,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC13makeDuplicateSo5GizmoCyF : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return [[RES]]
   // CHECK-NEXT: }
@@ -88,7 +118,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC7initFooSo5GizmoCyF : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return [[RES]]
   // CHECK-NEXT: }
@@ -102,7 +132,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref objc_thunks.Hoozit.typicalProperty.getter
   // CHECK-NEXT:   [[GETIMPL:%.*]] = function_ref @$S11objc_thunks6HoozitC15typicalPropertySo5GizmoCvg
   // CHECK-NEXT:   [[RES:%.*]] = apply [[GETIMPL]]([[BORROWED_SELF_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_SELF_COPY]]
   // CHECK-NEXT:   destroy_value [[SELF_COPY]]
   // CHECK-NEXT:   return [[RES]] : $Gizmo
   // CHECK-NEXT: }
@@ -125,7 +155,7 @@ class Hoozit : Gizmo {
   // CHECK:   // function_ref objc_thunks.Hoozit.typicalProperty.setter
   // CHECK:   [[FR:%.*]] = function_ref @$S11objc_thunks6HoozitC15typicalPropertySo5GizmoCvs
   // CHECK:   [[RES:%.*]] = apply [[FR]]([[VALUE_COPY]], [[BORROWED_THIS_COPY]])
-  // CHECK:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK:   destroy_value [[THIS_COPY]]
   // CHECK:   return [[RES]] : $(), loc {{.*}}, scope {{.*}} // id: {{.*}} line:[[@LINE-34]]:13:auto_gen
   // CHECK: } // end sil function '$S11objc_thunks6HoozitC15typicalPropertySo5GizmoCvsTo'
@@ -138,7 +168,7 @@ class Hoozit : Gizmo {
   // CHECK:   [[WRITE:%.*]] = begin_access [modify] [dynamic] [[ADDR]] : $*Gizmo
   // CHECK:   assign [[ARG0_COPY]] to [[WRITE]] : $*Gizmo
   // CHECK:   end_access [[WRITE]] : $*Gizmo
-  // CHECK:   end_borrow [[BORROWED_ARG0]] from [[ARG0]]
+  // CHECK:   end_borrow [[BORROWED_ARG0]]
   // CHECK:   destroy_value [[ARG0]]
   // CHECK: } // end sil function '$S11objc_thunks6HoozitC15typicalPropertySo5GizmoCvs'
 
@@ -152,7 +182,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref objc_thunks.Hoozit.copyProperty.getter
   // CHECK-NEXT:   [[FR:%.*]] = function_ref @$S11objc_thunks6HoozitC12copyPropertySo5GizmoCvg
   // CHECK-NEXT:   [[RES:%.*]] = apply [[FR]]([[BORROWED_SELF_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_SELF_COPY]]
   // CHECK-NEXT:   destroy_value [[SELF_COPY]]
   // CHECK-NEXT:   return [[RES]]
   // CHECK-NEXT: }
@@ -174,7 +204,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref objc_thunks.Hoozit.copyProperty.setter
   // CHECK-NEXT:   [[FR:%.*]] = function_ref @$S11objc_thunks6HoozitC12copyPropertySo5GizmoCvs
   // CHECK-NEXT:   [[RES:%.*]] = apply [[FR]]([[VALUE_COPY]], [[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return [[RES]]
 
@@ -186,7 +216,7 @@ class Hoozit : Gizmo {
   // CHECK:   [[WRITE:%.*]] = begin_access [modify] [dynamic] [[ADDR]] : $*Gizmo
   // CHECK:   assign [[ARG1_COPY]] to [[WRITE]]
   // CHECK:   end_access [[WRITE]] : $*Gizmo
-  // CHECK:   end_borrow [[BORROWED_ARG1]] from [[ARG1]]
+  // CHECK:   end_borrow [[BORROWED_ARG1]]
   // CHECK:   destroy_value [[ARG1]]
   // CHECK: } // end sil function '$S11objc_thunks6HoozitC12copyPropertySo5GizmoCvs'
 
@@ -199,7 +229,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC10roPropertySo5GizmoCvg : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]] : $Hoozit
   // CHECK-NEXT:   return [[RES]] : $Gizmo
   // CHECK-NEXT: } // end sil function '$S11objc_thunks6HoozitC10roPropertySo5GizmoCvgTo'
@@ -225,7 +255,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC10rwPropertySo5GizmoCvs : $@convention(method) (@owned Gizmo, @guaranteed Hoozit) -> ()
   // CHECK-NEXT:   apply [[NATIVE]]([[VALUE_COPY]], [[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return
   // CHECK-NEXT: }
@@ -244,7 +274,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC14copyRWPropertySo5GizmoCvg : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NOT:    return
   // CHECK-NEXT:   return [[RES]]
@@ -259,7 +289,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC14copyRWPropertySo5GizmoCvs : $@convention(method) (@owned Gizmo, @guaranteed Hoozit) -> ()
   // CHECK-NEXT:   apply [[NATIVE]]([[VALUE_COPY]], [[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return
   // CHECK-NEXT: }
@@ -273,7 +303,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC12initPropertySo5GizmoCvg : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return [[RES]]
   // CHECK-NEXT: }
@@ -287,7 +317,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC12initPropertySo5GizmoCvs : $@convention(method) (@owned Gizmo, @guaranteed Hoozit) -> ()
   // CHECK-NEXT:   apply [[NATIVE]]([[VALUE_COPY]], [[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return
   // CHECK-NEXT: }
@@ -304,7 +334,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC12propComputedSo5GizmoCvg : $@convention(method) (@guaranteed Hoozit) -> @owned Gizmo
   // CHECK-NEXT:   [[RES:%.*]] = apply [[NATIVE]]([[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return [[RES]]
   // CHECK-NEXT: }
@@ -318,7 +348,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6HoozitC12propComputedSo5GizmoCvs : $@convention(method) (@owned Gizmo, @guaranteed Hoozit) -> ()
   // CHECK-NEXT:   apply [[NATIVE]]([[VALUE_COPY]], [[BORROWED_THIS_COPY]])
-  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]] from [[THIS_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_THIS_COPY]]
   // CHECK-NEXT:   destroy_value [[THIS_COPY]]
   // CHECK-NEXT:   return
   // CHECK-NEXT: }
@@ -336,7 +366,7 @@ class Hoozit : Gizmo {
   // CHECK: [[BORROWED_GIZMO:%.*]] = begin_borrow [[GIZMO]]
   // CHECK: [[CAST_BORROWED_GIZMO:%.*]] = unchecked_ref_cast [[BORROWED_GIZMO]] : $Gizmo to $Hoozit
   // CHECK: [[SUPERMETHOD:%[0-9]+]] = objc_super_method [[CAST_BORROWED_GIZMO]] : $Hoozit, #Gizmo.init!initializer.1.foreign : (Gizmo.Type) -> (Int) -> Gizmo?, $@convention(objc_method) (Int, @owned Gizmo) -> @owned Optional<Gizmo>
-  // CHECK-NEXT: end_borrow [[BORROWED_GIZMO]] from [[GIZMO]]
+  // CHECK-NEXT: end_borrow [[BORROWED_GIZMO]]
   // CHECK-NEXT: [[SELF_REPLACED:%[0-9]+]] = apply [[SUPERMETHOD]](%0, [[X:%[0-9]+]]) : $@convention(objc_method) (Int, @owned Gizmo) -> @owned Optional<Gizmo>
   // CHECK-NOT: unconditional_checked_cast downcast [[SELF_REPLACED]] : $Gizmo to $Hoozit
   // CHECK: unchecked_ref_cast
@@ -356,7 +386,7 @@ class Hoozit : Gizmo {
   // CHECK-NEXT: // function_ref
   // CHECK-NEXT: [[NATIVE:%[0-9]+]] = function_ref @$S11objc_thunks6HoozitCyACSicig : $@convention(method) (Int, @guaranteed Hoozit) -> @owned Hoozit
   // CHECK-NEXT: [[RESULT:%[0-9]+]] = apply [[NATIVE]]([[I]], [[BORROWED_SELF_COPY]]) : $@convention(method) (Int, @guaranteed Hoozit) -> @owned Hoozit
-  // CHECK-NEXT: end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+  // CHECK-NEXT: end_borrow [[BORROWED_SELF_COPY]]
   // CHECK-NEXT: destroy_value [[SELF_COPY]]
   // CHECK-NEXT: return [[RESULT]] : $Hoozit
   get {
@@ -371,7 +401,7 @@ class Hoozit : Gizmo {
   // CHECK:   [[BORROWED_SELF_COPY:%.*]] = begin_borrow [[SELF_COPY]]
   // CHECK:   [[NATIVE:%[0-9]+]] = function_ref @$S11objc_thunks6HoozitCyACSicis : $@convention(method) (@owned Hoozit, Int, @guaranteed Hoozit) -> ()
   // CHECK:   [[RESULT:%[0-9]+]] = apply [[NATIVE]]([[VALUE_COPY]], [[I]], [[BORROWED_SELF_COPY]]) : $@convention(method) (@owned Hoozit, Int, @guaranteed Hoozit) -> ()
-  // CHECK:   end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+  // CHECK:   end_borrow [[BORROWED_SELF_COPY]]
   // CHECK:   destroy_value [[SELF_COPY]]
   // CHECK:   return [[RESULT]] : $()
   // CHECK: } // end sil function '$S11objc_thunks6HoozitCyACSicisTo'
@@ -387,7 +417,7 @@ class Wotsit<T> : Gizmo {
   // CHECK-NEXT: // function_ref
   // CHECK-NEXT: [[NATIVE:%.*]] = function_ref @$S11objc_thunks6WotsitC5plainyyF : $@convention(method) <τ_0_0> (@guaranteed Wotsit<τ_0_0>) -> ()
   // CHECK-NEXT: [[RESULT:%.*]] = apply [[NATIVE]]<T>([[BORROWED_SELF_COPY]]) : $@convention(method) <τ_0_0> (@guaranteed Wotsit<τ_0_0>) -> ()
-  // CHECK-NEXT: end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+  // CHECK-NEXT: end_borrow [[BORROWED_SELF_COPY]]
   // CHECK-NEXT: destroy_value [[SELF_COPY]] : $Wotsit<T>
   // CHECK-NEXT: return [[RESULT]] : $()
   // CHECK-NEXT: }
@@ -409,13 +439,13 @@ class Wotsit<T> : Gizmo {
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[NATIVE:%.*]] = function_ref @$S11objc_thunks6WotsitC11descriptionSSvg : $@convention(method) <τ_0_0> (@guaranteed Wotsit<τ_0_0>) -> @owned String
   // CHECK-NEXT:   [[RESULT:%.*]] = apply [[NATIVE:%.*]]<T>([[BORROWED_SELF_COPY]]) : $@convention(method) <τ_0_0> (@guaranteed Wotsit<τ_0_0>) -> @owned String
-  // CHECK-NEXT:   end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_SELF_COPY]]
   // CHECK-NEXT:   destroy_value [[SELF_COPY]] : $Wotsit<T>
   // CHECK-NEXT:   // function_ref
   // CHECK-NEXT:   [[BRIDGE:%.*]] = function_ref @$SSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF
   // CHECK-NEXT:   [[BORROWED_RESULT:%.*]] = begin_borrow [[RESULT]]
   // CHECK-NEXT:   [[NSRESULT:%.*]] = apply [[BRIDGE]]([[BORROWED_RESULT]]) : $@convention(method) (@guaranteed String) -> @owned NSString
-  // CHECK-NEXT:   end_borrow [[BORROWED_RESULT]] from [[RESULT]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_RESULT]]
   // CHECK-NEXT:   destroy_value [[RESULT]]
   // CHECK-NEXT:   return [[NSRESULT]] : $NSString
   // CHECK-NEXT: }
@@ -453,7 +483,7 @@ extension Hoozit {
     other()
   }
 
-  func foof() {}
+  @objc func foof() {}
   // CHECK-LABEL: sil hidden [thunk] @$S11objc_thunks6HoozitC4foofyyFTo : $@convention(objc_method) (Hoozit) -> () {
 
   var extensionProperty: Int { return 0 }
@@ -540,3 +570,25 @@ func registerAnsible() {
   // CHECK: function_ref @$S11objc_thunks15registerAnsibleyyFyyycSgcfU_
   Ansible.anseAsync({ completion in completion!() })
 }
+@_silgen_name("noescape")
+func noescape(f: @convention(block) () -> ())
+
+// CHECK: sil hidden @$S11objc_thunks21testObjCNoescapeThunkyyF : $@convention(thin) () -> () {
+// CHECK: [[REABSTRACT:%.*]] = function_ref @$SIeg_IyB_TR
+// CHECK: init_block_storage_header {{.*}} : $*@block_storage @callee_guaranteed () -> (), invoke [[REABSTRACT]]
+// CHECK: return
+func testObjCNoescapeThunk() {
+  noescape {
+  }
+}
+
+// Noescape verification relies on there not being a retain/release in order to
+// work in the presence of a objective c throwing implementation function.
+// CHECK: sil {{.*}} @$SIeg_IyB_TR
+// CHECK: bb0([[T0:%.*]] : @trivial $*@block_storage @callee_guaranteed () -> ()):
+// CHECK-NEXT:  [[T1:%.*]] = project_block_storage [[T0]]
+// CHECK-NEXT:  [[T2:%.*]] = load_borrow [[T1]]
+// CHECK-NEXT:  [[T3:%.*]] = apply [[T2]]()
+// CHECK-NEXT:  [[T4:%.*]] = tuple ()
+// CHECK-NEXT:  end_borrow [[T2]]
+// CHECK-NEXT:  return [[T4]]

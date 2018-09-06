@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name weak -Xllvm -sil-full-demangle -emit-silgen -enable-sil-ownership %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name weak -Xllvm -sil-full-demangle -enable-sil-ownership %s | %FileCheck %s
 
 class C {
   func f() -> Int { return 42 }
@@ -57,9 +57,8 @@ func test0(c c: C) {
 // CHECK-NEXT:  %1 = project_box %0
 // CHECK-NEXT:  debug_value_addr %1 : $*@sil_weak Optional<C>, var, name "bC", argno 1
 // CHECK-NEXT:  [[READ:%.*]] = begin_access [read] [unknown] %1
-// CHECK-NEXT:  [[STK:%.*]] = alloc_stack $Optional<C>
 // CHECK-NEXT:  [[VAL:%.*]] = load_weak [[READ]] : $*@sil_weak Optional<C>
-// CHECK-NEXT:  store [[VAL]] to [init] [[STK]] : $*Optional<C>
+// CHECK-NEXT:  end_access [[READ]]
 func testClosureOverWeak() {
   weak var bC = C()
   takeClosure { bC!.f() }
@@ -78,7 +77,7 @@ class CC {
   // CHECK:    [[READ:%.*]] = begin_access [read] [dynamic] [[X]] : $*@sil_weak Optional<CC>
   // CHECK:    [[VALUE:%.*]] = load_weak [[READ]] : $*@sil_weak Optional<CC>
   // CHECK:    store [[VALUE]] to [init] [[PB]] : $*Optional<CC>
-  // CHECK:    end_borrow [[BORROWED_UNINIT_SELF]] from [[UNINIT_SELF]]
+  // CHECK:    end_borrow [[BORROWED_UNINIT_SELF]]
   // CHECK:    destroy_value [[FOO]]
   // CHECK: } // end sil function '$S4weak2CCC{{[_0-9a-zA-Z]*}}fc'
   init() {

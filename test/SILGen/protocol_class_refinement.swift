@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-silgen -enable-sil-ownership %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -enable-sil-ownership %s | %FileCheck %s
 
 protocol UID {
     func uid() -> Int
@@ -73,7 +73,7 @@ func getObjectUID<T: ObjectUID>(x: T) -> (Int, Int, Int, Int) {
   // -- call secondNextCLSID from class-constrained protocol ext
   // CHECK: [[SET_SECONDNEXT:%.*]] = function_ref @$S25protocol_class_refinement9ObjectUIDPAAE15secondNextCLSIDSivs
   // CHECK: apply [[SET_SECONDNEXT]]<T>([[UID]], [[BORROWED_X1]])
-  // CHECK: end_borrow [[BORROWED_X1]] from [[X1]]
+  // CHECK: end_borrow [[BORROWED_X1]]
   // CHECK: destroy_value [[X1]]
   x.secondNextCLSID = x.uid()
   return (x.iid, x.clsid, x.nextCLSID, x.secondNextCLSID)
@@ -82,7 +82,7 @@ func getObjectUID<T: ObjectUID>(x: T) -> (Int, Int, Int, Int) {
 }
 
 // CHECK-LABEL: sil hidden @$S25protocol_class_refinement16getBaseObjectUID{{[_0-9a-zA-Z]*}}F
-func getBaseObjectUID<T: UID where T: Base>(x: T) -> (Int, Int, Int) {
+func getBaseObjectUID<T: UID>(x: T) -> (Int, Int, Int) where T: Base {
   var x = x
   // CHECK: [[XBOX:%.*]] = alloc_box $<τ_0_0 where τ_0_0 : Base, τ_0_0 : UID> { var τ_0_0 } <T>
   // CHECK: [[PB:%.*]] = project_box [[XBOX]]

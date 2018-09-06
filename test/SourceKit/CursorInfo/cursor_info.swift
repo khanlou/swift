@@ -220,6 +220,13 @@ func funcWithNestedEscaping(a : (@escaping () -> ()) -> ()) {}
 /// doc
 typealias typeWithNestedAutoclosure = (@autoclosure () -> ()) -> ()
 
+typealias GenericAlias<T, U> = MyAlias<T, U> where T: P1
+
+enum E7: String {
+    case a = "\u{001B}"
+    case b = "\u{66}"
+}
+
 // REQUIRES: objc_interop
 // RUN: %empty-directory(%t.tmp)
 // RUN: %swiftc_driver -emit-module -o %t.tmp/FooSwiftModule.swiftmodule %S/Inputs/FooSwiftModule.swift
@@ -321,8 +328,8 @@ typealias typeWithNestedAutoclosure = (@autoclosure () -> ()) -> ()
 
 // RUN: %sourcekitd-test -req=cursor -pos=31:7 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK13 %s
 // CHECK13: source.lang.swift.decl.function.free (31:6-31:37)
-// CHECK13: <Declaration>func testDefaultParam(arg1: <Type usr="s:Si">Int</Type> = default)</Declaration>
-// CHECK13: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>testDefaultParam</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>arg1</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type> = <syntaxtype.keyword>default</syntaxtype.keyword></decl.var.parameter>)</decl.function.free>
+// CHECK13: <Declaration>func testDefaultParam(arg1: <Type usr="s:Si">Int</Type> = 0)</Declaration>
+// CHECK13: <decl.function.free><syntaxtype.keyword>func</syntaxtype.keyword> <decl.name>testDefaultParam</decl.name>(<decl.var.parameter><decl.var.parameter.argument_label>arg1</decl.var.parameter.argument_label>: <decl.var.parameter.type><ref.struct usr="s:Si">Int</ref.struct></decl.var.parameter.type> = 0</decl.var.parameter>)</decl.function.free>
 
 // RUN: %sourcekitd-test -req=cursor -pos=34:4 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK14 %s
 // CHECK14: source.lang.swift.ref.function.free ({{.*}}Foo.framework/Frameworks/FooSub.framework/Headers/FooSub.h:4:5-4:16)
@@ -645,13 +652,11 @@ typealias typeWithNestedAutoclosure = (@autoclosure () -> ()) -> ()
 // CHECK73-SAME: = <syntaxtype.keyword>#file</syntaxtype.keyword>
 // CHECK73-SAME: = <syntaxtype.keyword>#line</syntaxtype.keyword>
 // CHECK73-SAME: = <syntaxtype.keyword>#column</syntaxtype.keyword>
-// FIXME: []
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
-// FIXME: [:]
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
-// FIXME: keyword nil
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
-// CHECK73-SAME: = <syntaxtype.keyword>default</syntaxtype.keyword>
+// CHECK73-SAME: = []
+// CHECK73-SAME: = [:]
+// FIXME: should be <syntaxtype.keyword>nil</syntaxtype.keyword>
+// CHECK73-SAME: = nil
+// CHECK73-SAME: = 1
 
 // RUN: %sourcekitd-test -req=cursor -pos=162:8 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck %s -check-prefix=CHECK74
 // CHECK74: source.lang.swift.decl.function.method.instance (162:8-162:20)
@@ -746,3 +751,15 @@ typealias typeWithNestedAutoclosure = (@autoclosure () -> ()) -> ()
 // RUN: %sourcekitd-test -req=cursor -pos=221:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK90 %s
 // CHECK90: <Declaration>typealias typeWithNestedAutoclosure = (@autoclosure () -&gt; ()) -&gt; ()</Declaration>
 // CHECK90-NEXT: <decl.var.parameter.type><syntaxtype.attribute.builtin><syntaxtype.attribute.name>@autoclosure</syntaxtype.attribute.name></syntaxtype.attribute.builtin> () -&gt; <decl.function.returntype><tuple>()</tuple></decl.function.returntype></decl.var.parameter.type>
+
+// RUN: %sourcekitd-test -req=cursor -pos=223:11 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK91 %s
+// CHECK91: <Declaration>typealias GenericAlias&lt;T, U&gt; = <Type usr="s:11cursor_info7MyAliasa">MyAlias</Type>&lt;<Type usr="s:11cursor_info12GenericAliasa1Txmfp">T</Type>, <Type usr="s:11cursor_info12GenericAliasa1Uq_mfp">U</Type>&gt; where T : <Type usr="s:11cursor_info2P1P">P1</Type></Declaration>
+// CHECK91-NEXT: <decl.typealias><syntaxtype.keyword>typealias</syntaxtype.keyword> <decl.name>GenericAlias</decl.name>&lt;<decl.generic_type_param usr="s:11cursor_info12GenericAliasa1Txmfp"><decl.generic_type_param.name>T</decl.generic_type_param.name></decl.generic_type_param>, <decl.generic_type_param usr="s:11cursor_info12GenericAliasa1Uq_mfp"><decl.generic_type_param.name>U</decl.generic_type_param.name></decl.generic_type_param>&gt; = <ref.typealias usr="s:11cursor_info7MyAliasa">MyAlias</ref.typealias>&lt;<ref.generic_type_param usr="s:11cursor_info12GenericAliasa1Txmfp">T</ref.generic_type_param>, <ref.generic_type_param usr="s:11cursor_info12GenericAliasa1Uq_mfp">U</ref.generic_type_param>&gt; <syntaxtype.keyword>where</syntaxtype.keyword> <decl.generic_type_requirement>T : <ref.protocol usr="s:11cursor_info2P1P">P1</ref.protocol></decl.generic_type_requirement></decl.typealias>
+
+// RUN: %sourcekitd-test -req=cursor -pos=226:10 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK92 %s
+// CHECK92: <Declaration>case a = &quot;\u{1B}&quot;</Declaration>
+// CHECK92-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>a</decl.name> = <syntaxtype.string>&quot;\u{1B}&quot;</syntaxtype.string></decl.enumelement>
+
+// RUN: %sourcekitd-test -req=cursor -pos=227:10 %s -- -F %S/../Inputs/libIDE-mock-sdk -I %t.tmp %mcp_opt %s | %FileCheck -check-prefix=CHECK93 %s
+// CHECK93: <Declaration>case b = &quot;f&quot;</Declaration>
+// CHECK93-NEXT: <decl.enumelement><syntaxtype.keyword>case</syntaxtype.keyword> <decl.name>b</decl.name> = <syntaxtype.string>&quot;f&quot;</syntaxtype.string></decl.enumelement>

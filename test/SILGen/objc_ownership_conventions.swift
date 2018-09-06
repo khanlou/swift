@@ -1,7 +1,4 @@
-
-// RUN: %target-swift-frontend -module-name objc_ownership_conventions -sdk %S/Inputs -I %S/Inputs -enable-source-import %s -emit-silgen -enable-sil-ownership | %FileCheck %s
-
-// REQUIRES: objc_interop
+// RUN: %target-swift-emit-silgen -module-name objc_ownership_conventions -sdk %S/Inputs -I %S/Inputs -enable-source-import %s -enable-sil-ownership -enable-objc-interop | %FileCheck %s
 
 import gizmo
 
@@ -177,7 +174,7 @@ func applyBlock(_ f: @convention(block) (Gizmo) -> Gizmo, x: Gizmo) -> Gizmo {
   // CHECK:       [[BLOCK_COPY_COPY:%.*]] = copy_value [[BORROWED_BLOCK_COPY]]
   // CHECK:       [[RESULT:%.*]] = apply [[BLOCK_COPY_COPY]]([[ARG]])
   // CHECK:       destroy_value [[BLOCK_COPY_COPY]]
-  // CHECK:       end_borrow [[BORROWED_BLOCK_COPY]] from [[BLOCK_COPY]]
+  // CHECK:       end_borrow [[BORROWED_BLOCK_COPY]]
   // CHECK-NOT:       destroy_value [[ARG]]
   // CHECK:       destroy_value [[BLOCK_COPY]]
   // CHECK-NOT:       destroy_value [[BLOCK]]

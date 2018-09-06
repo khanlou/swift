@@ -18,6 +18,7 @@
 #define SWIFT_ATTRKIND_H
 
 #include "swift/Basic/InlineBitfield.h"
+#include "swift/Basic/LLVM.h"
 #include "swift/Config.h"
 #include "llvm/Support/DataTypes.h"
 
@@ -63,6 +64,9 @@ enum class AccessLevel : uint8_t {
   Open,
 };
 
+/// Returns the in-source spelling of the given access level.
+StringRef getAccessLevelSpelling(AccessLevel value);
+
 enum class InlineKind : uint8_t {
   Never = 0,
   Always = 1,
@@ -72,7 +76,7 @@ enum class InlineKind : uint8_t {
 enum : unsigned { NumInlineKindBits =
   countBitsUsed(static_cast<unsigned>(InlineKind::Last_InlineKind)) };
 
-/// This enum represents the possible values of the @effects attribute.
+/// This enum represents the possible values of the @_effects attribute.
 /// These values are ordered from the strongest guarantee to the weakest,
 /// so please do not reorder existing values.
 enum class EffectsKind : uint8_t {

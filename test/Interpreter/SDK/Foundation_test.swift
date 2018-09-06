@@ -163,8 +163,8 @@ FoundationTestSuite.test("RangeConversion") {
   expectEqual("{0, 5}", NSStringFromRange(nsrFromPartial))
 
   let s = "Hello, 🌎!"
-  let b = s.index(of: ",")!
-  let e = s.index(of: "!")!
+  let b = s.firstIndex(of: ",")!
+  let e = s.firstIndex(of: "!")!
   let nsr = NSRange(b..<e, in: s)
   expectEqual(nsr.location, 5)
   expectEqual(nsr.length, 4)
@@ -408,7 +408,7 @@ if #available(OSX 10.11, iOS 9.0, *) {
 
     // confirm the that class function works
     do {
-      let decoded = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSPredicate
+      let decoded = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data as Data) as? NSPredicate
       expectEqual(obj, decoded)
     }
     catch {

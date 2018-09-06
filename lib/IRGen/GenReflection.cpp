@@ -228,26 +228,27 @@ protected:
     }
   }
 
-  llvm::GlobalVariable *emit(Optional<LinkEntity> entity,
-                             const char *section) {
+  // A function signature for a lambda wrapping an IRGenModule::getAddrOf*
+  // method.
+  using GetAddrOfEntityFn = llvm::Constant* (IRGenModule &, ConstantInit);
+
+  llvm::GlobalVariable *emit(
+                        Optional<llvm::function_ref<GetAddrOfEntityFn>> getAddr,
+                        const char *section) {
     layout();
 
     llvm::GlobalVariable *var;
 
     // Some reflection records have a mangled symbol name, for uniquing
     // imported type metadata.
-    if (entity) {
-      auto info = LinkInfo::get(IGM, *entity, ForDefinition);
-
+    if (getAddr) {
       auto init = B.finishAndCreateFuture();
 
-      var = createVariable(IGM, info, init.getType(), Alignment(4));
+      var = cast<llvm::GlobalVariable>((*getAddr)(IGM, init));
       var->setConstant(true);
-      init.installInGlobal(var);
-
     // Others, such as capture descriptors, do not have a name.
     } else {
-      var = B.finishAndCreateGlobal("\x01l__swift4_reflection_descriptor",
+      var = B.finishAndCreateGlobal("\x01l__swift5_reflection_descriptor",
                                     Alignment(4), /*isConstant*/ true,
                                     llvm::GlobalValue::PrivateLinkage);
     }
@@ -259,6 +260,19 @@ protected:
     disableAddressSanitizer(IGM, var);
 
     return var;
+  }
+
+  // Helpers to guide the C++ type system into converting lambda arguments
+  // to Optional<function_ref>
+  llvm::GlobalVariable *emit(llvm::function_ref<GetAddrOfEntityFn> getAddr,
+                             const char *section) {
+    return emit(Optional<llvm::function_ref<GetAddrOfEntityFn>>(getAddr),
+                section);
+  }
+  llvm::GlobalVariable *emit(NoneType none,
+                             const char *section) {
+    return emit(Optional<llvm::function_ref<GetAddrOfEntityFn>>(),
+                section);
   }
 
   virtual void layout() = 0;
@@ -301,9 +315,12 @@ public:
       AssociatedTypes(AssociatedTypes) {}
 
   llvm::GlobalVariable *emit() {
-    auto entity = LinkEntity::forReflectionAssociatedTypeDescriptor(Conformance);
     auto section = IGM.getAssociatedTypeMetadataSectionName();
-    return ReflectionMetadataBuilder::emit(entity, section);
+    return ReflectionMetadataBuilder::emit(
+      [&](IRGenModule &IGM, ConstantInit init) -> llvm::Constant* {
+       return IGM.getAddrOfReflectionAssociatedTypeDescriptor(Conformance,init);
+      },
+      section);
   }
 };
 
@@ -341,7 +358,7 @@ class FieldTypeMetadataBuilder : public ReflectionMetadataBuilder {
 
     if (auto CD = dyn_cast<ClassDecl>(NTD)) {
       auto type = CD->getDeclaredType()->getCanonicalType();
-      auto RC = getReferenceCountingForType(IGM, type);
+      auto RC = type->getReferenceCounting();
       if (RC == ReferenceCounting::ObjC)
         kind = FieldDescriptorKind::ObjCClass;
       else
@@ -460,10 +477,13 @@ public:
     : ReflectionMetadataBuilder(IGM), NTD(NTD) {}
 
   llvm::GlobalVariable *emit() {
-    auto entity = LinkEntity::forReflectionFieldDescriptor(
-        NTD->getDeclaredType()->getCanonicalType());
     auto section = IGM.getFieldTypeMetadataSectionName();
-    return ReflectionMetadataBuilder::emit(entity, section);
+    return ReflectionMetadataBuilder::emit(
+      [&](IRGenModule &IGM, ConstantInit definition) -> llvm::Constant* {
+        return IGM.getAddrOfReflectionFieldDescriptor(
+          NTD->getDeclaredType()->getCanonicalType(), definition);
+      },
+      section);
   }
 };
 
@@ -500,9 +520,12 @@ public:
   }
 
   llvm::GlobalVariable *emit() {
-    auto entity = LinkEntity::forReflectionBuiltinDescriptor(type);
     auto section = IGM.getBuiltinTypeMetadataSectionName();
-    return ReflectionMetadataBuilder::emit(entity, section);
+    return ReflectionMetadataBuilder::emit(
+      [&](IRGenModule &IGM, ConstantInit definition) -> llvm::Constant * {
+        return IGM.getAddrOfReflectionBuiltinDescriptor(type, definition);
+      },
+      section);
   }
 };
 
@@ -558,14 +581,14 @@ class CaptureDescriptorBuilder : public ReflectionMetadataBuilder {
   swift::reflection::MetadataSourceBuilder SourceBuilder;
   CanSILFunctionType OrigCalleeType;
   CanSILFunctionType SubstCalleeType;
-  SubstitutionList Subs;
+  SubstitutionMap Subs;
   const HeapLayout &Layout;
 
 public:
   CaptureDescriptorBuilder(IRGenModule &IGM,
                            CanSILFunctionType OrigCalleeType,
                            CanSILFunctionType SubstCalleeType,
-                           SubstitutionList Subs,
+                           SubstitutionMap Subs,
                            const HeapLayout &Layout)
     : ReflectionMetadataBuilder(IGM),
       OrigCalleeType(OrigCalleeType),
@@ -610,7 +633,7 @@ public:
     auto ElementTypes = Layout.getElementTypes().slice(
         Layout.hasBindings() ? 1 : 0);
     for (auto ElementType : ElementTypes) {
-      auto SwiftType = ElementType.getSwiftRValueType();
+      auto SwiftType = ElementType.getASTType();
       if (SwiftType->hasOpenedExistential())
         return true;
     }
@@ -656,9 +679,6 @@ public:
     // Check if any requirements were fulfilled by metadata stored inside a
     // captured value.
 
-    auto SubstMap =
-      OrigCalleeType->getGenericSignature()->getSubstitutionMap(Subs);
-
     enumerateGenericParamFulfillments(IGM, OrigCalleeType,
         [&](CanType GenericParam,
             const irgen::MetadataSource &Source,
@@ -690,7 +710,7 @@ public:
       // parameters.
       auto Src = Path.getMetadataSource(SourceBuilder, Root);
 
-      auto SubstType = GenericParam.subst(SubstMap);
+      auto SubstType = GenericParam.subst(Subs);
       auto InterfaceType = SubstType->mapTypeOutOfContext();
       SourceMap.push_back({InterfaceType->getCanonicalType(), Src});
     });
@@ -704,7 +724,7 @@ public:
     std::vector<CanType> CaptureTypes;
 
     for (auto ElementType : getElementTypes()) {
-      auto SwiftType = ElementType.getSwiftRValueType();
+      auto SwiftType = ElementType.getASTType();
 
       // Erase pseudogeneric captures down to AnyObject.
       if (OrigCalleeType->isPseudogeneric()) {
@@ -769,12 +789,12 @@ static std::string getReflectionSectionName(IRGenModule &IGM,
     OS << ".sw5" << FourCC << "$B";
     break;
   case llvm::Triple::ELF:
-    OS << "swift4_" << LongName;
+    OS << "swift5_" << LongName;
     break;
   case llvm::Triple::MachO:
     assert(LongName.size() <= 7 &&
            "Mach-O section name length must be <= 16 characters");
-    OS << "__TEXT,__swift4_" << LongName << ", regular, no_dead_strip";
+    OS << "__TEXT,__swift5_" << LongName << ", regular, no_dead_strip";
     break;
   case llvm::Triple::Wasm:
     llvm_unreachable("web assembly object format is not supported.");
@@ -845,7 +865,7 @@ llvm::Constant *
 IRGenModule::getAddrOfCaptureDescriptor(SILFunction &Caller,
                                         CanSILFunctionType OrigCalleeType,
                                         CanSILFunctionType SubstCalleeType,
-                                        SubstitutionList Subs,
+                                        SubstitutionMap Subs,
                                         const HeapLayout &Layout) {
   if (!IRGen.Opts.EnableReflectionMetadata)
     return llvm::Constant::getNullValue(CaptureDescriptorPtrTy);
@@ -900,7 +920,7 @@ void IRGenModule::emitBuiltinReflectionMetadata() {
     // extra inhabitants as these. But maybe it's best not to codify
     // that in the ABI anyway.
     CanType thinFunction = CanFunctionType::get(
-      AnyFunctionType::CanParamArrayRef(), Context.TheEmptyTupleType,
+      {}, Context.TheEmptyTupleType,
       AnyFunctionType::ExtInfo().withRepresentation(
           FunctionTypeRepresentation::Thin));
     BuiltinTypes.insert(thinFunction);

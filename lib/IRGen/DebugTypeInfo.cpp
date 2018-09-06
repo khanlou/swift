@@ -63,18 +63,10 @@ DebugTypeInfo DebugTypeInfo::getFromTypeInfo(DeclContext *DC,
 DebugTypeInfo DebugTypeInfo::getLocalVariable(DeclContext *DC,
                                               GenericEnvironment *GE,
                                               VarDecl *Decl, swift::Type Ty,
-                                              const TypeInfo &Info,
-                                              bool Unwrap) {
+                                              const TypeInfo &Info) {
 
-  auto DeclType = (Decl->hasType()
-                   ? Decl->getType()
-                   : Decl->getDeclContext()->mapTypeIntoContext(
-                     Decl->getInterfaceType()));
+  auto DeclType = Decl->getInterfaceType();
   auto RealType = Ty;
-  if (Unwrap) {
-    DeclType = DeclType->getInOutObjectType();
-    RealType = RealType->getInOutObjectType();
-  }
 
   // DynamicSelfType is also sugar as far as debug info is concerned.
   auto Sugared = DeclType;
@@ -103,14 +95,12 @@ DebugTypeInfo DebugTypeInfo::getGlobal(SILGlobalVariable *GV,
   // the type hasn't been mucked with by an optimization pass.
   DeclContext *DC = nullptr;
   GenericEnvironment *GE = nullptr;
-  auto LowTy = GV->getLoweredType().getSwiftRValueType();
+  auto LowTy = GV->getLoweredType().getASTType();
   auto *Type = LowTy.getPointer();
   if (auto *Decl = GV->getDecl()) {
     DC = Decl->getDeclContext();
     GE = DC->getGenericEnvironmentOfContext();
-    auto DeclType =
-        (Decl->hasType() ? Decl->getType()
-                         : DC->mapTypeIntoContext(Decl->getInterfaceType()));
+    auto DeclType = Decl->getType();
     if (DeclType->isEqual(LowTy))
       Type = DeclType.getPointer();
   }
@@ -118,7 +108,7 @@ DebugTypeInfo DebugTypeInfo::getGlobal(SILGlobalVariable *GV,
                       hasDefaultAlignment(Type));
   assert(StorageTy && "StorageType is a nullptr");
   assert(!DbgTy.isArchetype() &&
-         "type of a global var cannot contain an archetype");
+         "type of global variable cannot be an archetype");
   assert(align.getValue() != 0);
   return DbgTy;
 }
@@ -129,8 +119,7 @@ DebugTypeInfo DebugTypeInfo::getObjCClass(ClassDecl *theClass,
   DebugTypeInfo DbgTy(nullptr, nullptr,
                       theClass->getInterfaceType().getPointer(), StorageType,
                       size, align, true);
-  assert(!DbgTy.isArchetype() &&
-         "type of an objc class cannot contain an archetype");
+  assert(!DbgTy.isArchetype() && "type of objc class cannot be an archetype");
   return DbgTy;
 }
 

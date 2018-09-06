@@ -75,6 +75,7 @@ EXPR_NODES = [
                        'SelfToken',
                        'CapitalSelfToken',
                        'DollarIdentifierToken',
+                       'SpacedBinaryOperatorToken',
                    ]),
              Child('DeclNameArguments', kind='DeclNameArguments',
                    is_optional=True),
@@ -299,7 +300,9 @@ EXPR_NODES = [
     # a.b
     Node('MemberAccessExpr', kind='Expr',
          children=[
-             Child("Base", kind='Expr'),
+             # The base needs to be optional to parse expressions in key paths
+             # like \.a
+             Child("Base", kind='Expr', is_optional=True),
              Child("Dot", kind='PeriodToken'),
              Child("Name", kind='Token'),
              Child('DeclNameArguments', kind='DeclNameArguments',
@@ -470,7 +473,9 @@ EXPR_NODES = [
          traits=['Parenthesized'],
          children=[
              Child('Backslash', kind='BackslashToken'),
-             Child('LeftParen', kind='LeftParenToken'),
+             Child('LeftParen', kind='LeftParenToken', 
+                   classification='StringInterpolationAnchor',
+                   force_classification=True),
              Child('Expression', kind='Expr'),
              Child('RightParen', kind='StringInterpolationAnchorToken'),
          ]),
@@ -495,7 +500,19 @@ EXPR_NODES = [
     Node('KeyPathExpr', kind='Expr',
          children=[
              Child('Backslash', kind='BackslashToken'),
+             Child('RootExpr', kind='Expr', is_optional=True, 
+                   node_choices=[
+                       Child('IdentifierExpr', kind='IdentifierExpr'),
+                       Child('SpecializeExpr', kind='SpecializeExpr')
+                   ]), 
              Child('Expression', kind='Expr'),
+         ]),
+
+    # The period in the key path serves as the base on which the 
+    # right-hand-side of the key path is evaluated
+    Node('KeyPathBaseExpr', kind='Expr', 
+         children=[
+             Child('Period', kind='PeriodToken'),
          ]),
 
     # e.g. "a." or "a"

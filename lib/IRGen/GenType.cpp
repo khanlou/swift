@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/ABI/MetadataValues.h"
 #include "swift/AST/CanTypeVisitor.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/GenericEnvironment.h"
@@ -43,13 +44,16 @@
 #include "ProtocolInfo.h"
 #include "ReferenceTypeInfo.h"
 #include "ScalarTypeInfo.h"
-#include "WeakTypeInfo.h"
 #include "NativeConventionSchema.h"
 #include "IRGenMangler.h"
 #include "NonFixedTypeInfo.h"
 
 using namespace swift;
 using namespace irgen;
+
+Alignment IRGenModule::getCappedAlignment(Alignment align) {
+  return std::min(align, Alignment(MaximumAlignment));
+}
 
 llvm::DenseMap<TypeBase*, TypeCacheEntry> &
 TypeConverter::Types_t::getCacheFor(bool isDependent, bool completelyFragile) {
@@ -102,12 +106,12 @@ TypeInfo::~TypeInfo() {
 
 Address TypeInfo::getAddressForPointer(llvm::Value *ptr) const {
   assert(ptr->getType()->getPointerElementType() == StorageType);
-  return Address(ptr, StorageAlignment);
+  return Address(ptr, getBestKnownAlignment());
 }
 
 Address TypeInfo::getUndefAddress() const {
   return Address(llvm::UndefValue::get(getStorageType()->getPointerTo(0)),
-                 StorageAlignment);
+                 getBestKnownAlignment());
 }
 
 /// Whether this type is known to be empty.
@@ -221,6 +225,10 @@ llvm::Value *FixedTypeInfo::getIsPOD(IRGenFunction &IGF, SILType T) const {
   return llvm::ConstantInt::get(IGF.IGM.Int1Ty,
                                 isPOD(ResilienceExpansion::Maximal) == IsPOD);
 }
+llvm::Value *FixedTypeInfo::getIsBitwiseTakable(IRGenFunction &IGF, SILType T) const {
+  return llvm::ConstantInt::get(IGF.IGM.Int1Ty,
+                                isBitwiseTakable(ResilienceExpansion::Maximal) == IsBitwiseTakable);
+}
 llvm::Constant *FixedTypeInfo::getStaticStride(IRGenModule &IGM) const {
   return asSizeConstant(IGM, getFixedStride());
 }
@@ -239,12 +247,12 @@ unsigned FixedTypeInfo::getSpareBitExtraInhabitantCount() const {
     return 0;
   // The runtime supports a max of 0x7FFFFFFF extra inhabitants, which ought
   // to be enough for anybody.
-  if (StorageSize.getValue() >= 4)
+  if (getFixedSize().getValue() >= 4)
     return 0x7FFFFFFF;
   unsigned spareBitCount = SpareBits.count();
-  assert(spareBitCount <= StorageSize.getValueInBits()
+  assert(spareBitCount <= getFixedSize().getValueInBits()
          && "more spare bits than storage bits?!");
-  unsigned inhabitedBitCount = StorageSize.getValueInBits() - spareBitCount;
+  unsigned inhabitedBitCount = getFixedSize().getValueInBits() - spareBitCount;
   return ((1U << spareBitCount) - 1U) << inhabitedBitCount;
 }
 
@@ -304,7 +312,7 @@ FixedTypeInfo::getSpareBitExtraInhabitantIndex(IRGenFunction &IGF,
   auto &C = IGF.IGM.getLLVMContext();
   
   // Load the value.
-  auto payloadTy = llvm::IntegerType::get(C, StorageSize.getValueInBits());
+  auto payloadTy = llvm::IntegerType::get(C, getFixedSize().getValueInBits());
   src = IGF.Builder.CreateBitCast(src, payloadTy->getPointerTo());
   auto val = IGF.Builder.CreateLoad(src);
   
@@ -331,7 +339,7 @@ FixedTypeInfo::getSpareBitExtraInhabitantIndex(IRGenFunction &IGF,
   
   // See if spare bits fit into the 31 bits of the index.
   unsigned numSpareBits = SpareBits.count();
-  unsigned numOccupiedBits = StorageSize.getValueInBits() - numSpareBits;
+  unsigned numOccupiedBits = getFixedSize().getValueInBits() - numSpareBits;
   if (numOccupiedBits < 31) {
     // Gather the spare bits.
     llvm::Value *spareIdx
@@ -472,8 +480,8 @@ llvm::Value *FixedTypeInfo::getEnumTagSinglePayload(IRGenFunction &IGF,
 
   // TODO: big endian.
   Builder.CreateMemCpy(
-      Builder.CreateBitCast(extraTagBitsSlot, IGM.Int8PtrTy).getAddress(),
-      extraTagBitsAddr, numExtraTagBytes, 1);
+      Builder.CreateBitCast(extraTagBitsSlot, IGM.Int8PtrTy).getAddress(), 1,
+      extraTagBitsAddr, 1, numExtraTagBytes);
   auto extraTagBits = Builder.CreateLoad(extraTagBitsSlot);
 
   extraTagBitsBB = llvm::BasicBlock::Create(Ctx);
@@ -511,7 +519,7 @@ llvm::Value *FixedTypeInfo::getEnumTagSinglePayload(IRGenFunction &IGF,
   // If there are extra inhabitants, see whether the payload is valid.
   llvm::Value *result0;
   if (mayHaveExtraInhabitants(IGM)) {
-    result0 = getExtraInhabitantIndex(IGF, enumAddr, T);
+    result0 = getExtraInhabitantIndex(IGF, enumAddr, T, false);
     noExtraTagBitsBB = Builder.GetInsertBlock();
   } else {
     result0 = llvm::ConstantInt::getSigned(IGM.Int32Ty, -1);
@@ -666,7 +674,8 @@ void FixedTypeInfo::storeEnumTagSinglePayload(IRGenFunction &IGF,
   if (mayHaveExtraInhabitants(IGM)) {
     // Store an index in the range [0..ElementsWithNoPayload-1].
     auto *nonPayloadElementIndex = Builder.CreateSub(whichCase, one);
-    storeExtraInhabitant(IGF, nonPayloadElementIndex, enumAddr, T);
+    storeExtraInhabitant(IGF, nonPayloadElementIndex, enumAddr, T,
+                         /*outlined*/ false);
   }
   Builder.CreateBr(returnBB);
 
@@ -756,7 +765,7 @@ FixedTypeInfo::storeSpareBitExtraInhabitant(IRGenFunction &IGF,
   
   auto &C = IGF.IGM.getLLVMContext();
 
-  auto payloadTy = llvm::IntegerType::get(C, StorageSize.getValueInBits());
+  auto payloadTy = llvm::IntegerType::get(C, getFixedSize().getValueInBits());
 
   unsigned spareBitCount = SpareBits.count();
   unsigned occupiedBitCount = SpareBits.size() - spareBitCount;
@@ -869,7 +878,8 @@ namespace {
 
     llvm::Value *getExtraInhabitantIndex(IRGenFunction &IGF,
                                          Address src,
-                                         SILType T) const override {
+                                         SILType T,
+                                         bool isOutlined) const override {
       // Copied from BridgeObjectTypeInfo.
       src = IGF.Builder.CreateBitCast(src, IGF.IGM.IntPtrTy->getPointerTo());
       auto val = IGF.Builder.CreateLoad(src);
@@ -881,7 +891,8 @@ namespace {
     }
 
     void storeExtraInhabitant(IRGenFunction &IGF, llvm::Value *index,
-                              Address dest, SILType T) const override {
+                              Address dest, SILType T,
+                              bool isOutlined) const override {
       // Copied from BridgeObjectTypeInfo.
       // There's only one extra inhabitant, 0.
       dest = IGF.Builder.CreateBitCast(dest, IGF.IGM.IntPtrTy->getPointerTo());
@@ -1059,12 +1070,10 @@ TypeConverter::createImmovable(llvm::Type *type, Size size, Alignment align) {
 }
 
 static TypeInfo *invalidTypeInfo() { return (TypeInfo*) 1; }
-static ProtocolInfo *invalidProtocolInfo() { return (ProtocolInfo*) 1; }
 
 TypeConverter::TypeConverter(IRGenModule &IGM)
   : IGM(IGM),
-    FirstType(invalidTypeInfo()),
-    FirstProtocol(invalidProtocolInfo()) {
+    FirstType(invalidTypeInfo()) {
   // FIXME: In LLDB, everything is completely fragile, so that IRGen can query
   // the size of resilient types. Of course this is not the right long term
   // solution, because it won't work once the swiftmodule file is not in
@@ -1078,12 +1087,6 @@ TypeConverter::~TypeConverter() {
   // Delete all the converted type infos.
   for (const TypeInfo *I = FirstType; I != invalidTypeInfo(); ) {
     const TypeInfo *Cur = I;
-    I = Cur->NextConverted;
-    delete Cur;
-  }
-  
-  for (const ProtocolInfo *I = FirstProtocol; I != invalidProtocolInfo(); ) {
-    const ProtocolInfo *Cur = I;
     I = Cur->NextConverted;
     delete Cur;
   }
@@ -1158,10 +1161,11 @@ const TypeInfo &IRGenModule::getTypeMetadataPtrTypeInfo() {
   return Types.getTypeMetadataPtrTypeInfo();
 }
 
-const LoadableTypeInfo &TypeConverter::getTypeMetadataPtrTypeInfo() {
+const TypeInfo &TypeConverter::getTypeMetadataPtrTypeInfo() {
   if (TypeMetadataPtrTI) return *TypeMetadataPtrTI;
-  TypeMetadataPtrTI =
-    createUnmanagedStorageType(IGM.TypeMetadataPtrTy);
+  TypeMetadataPtrTI = createUnmanagedStorageType(IGM.TypeMetadataPtrTy,
+                                                 ReferenceCounting::Unknown,
+                                                 /*isOptional*/false);
   TypeMetadataPtrTI->NextConverted = FirstType;
   FirstType = TypeMetadataPtrTI;
   return *TypeMetadataPtrTI;
@@ -1243,12 +1247,15 @@ const LoadableTypeInfo &TypeConverter::getEmptyTypeInfo() {
   return *EmptyTI;
 }
 
-const TypeInfo &TypeConverter::getResilientStructTypeInfo() {
-  if (ResilientStructTI) return *ResilientStructTI;
-  ResilientStructTI = convertResilientStruct();
-  ResilientStructTI->NextConverted = FirstType;
-  FirstType = ResilientStructTI;
-  return *ResilientStructTI;
+const TypeInfo &
+TypeConverter::getResilientStructTypeInfo(IsABIAccessible_t isAccessible) {
+  auto &cache = isAccessible ? AccessibleResilientStructTI
+                             : InaccessibleResilientStructTI;
+  if (cache) return *cache;
+  cache = convertResilientStruct(isAccessible);
+  cache->NextConverted = FirstType;
+  FirstType = cache;
+  return *cache;
 }
 
 /// Get the fragile type information for the given type, which may not
@@ -1298,7 +1305,7 @@ SILType IRGenModule::getLoweredType(Type subst) {
 /// unlike fetching the type info and asking it for the storage type,
 /// this operation will succeed for forward-declarations.
 llvm::PointerType *IRGenModule::getStoragePointerType(SILType T) {
-  return getStoragePointerTypeForLowered(T.getSwiftRValueType());
+  return getStoragePointerTypeForLowered(T.getASTType());
 }
 llvm::PointerType *IRGenModule::getStoragePointerTypeForUnlowered(Type T) {
   return getStorageTypeForUnlowered(T)->getPointerTo();
@@ -1312,7 +1319,7 @@ llvm::Type *IRGenModule::getStorageTypeForUnlowered(Type subst) {
 }
 
 llvm::Type *IRGenModule::getStorageType(SILType T) {
-  return getStorageTypeForLowered(T.getSwiftRValueType());
+  return getStorageTypeForLowered(T.getASTType());
 }
 
 /// Get the storage type for the given type.  Note that, unlike
@@ -1353,7 +1360,7 @@ IRGenModule::getTypeInfoForUnlowered(AbstractionPattern orig, CanType subst) {
 /// to have undergone SIL type lowering (or be one of the types for
 /// which that lowering is the identity function).
 const TypeInfo &IRGenModule::getTypeInfo(SILType T) {
-  return getTypeInfoForLowered(T.getSwiftRValueType());
+  return getTypeInfoForLowered(T.getASTType());
 }
 
 /// Get the fragile type information for the given type.
@@ -1365,17 +1372,7 @@ const TypeInfo &IRGenModule::getTypeInfoForLowered(CanType T) {
 const TypeInfo &TypeConverter::getCompleteTypeInfo(CanType T) {
   auto entry = getTypeEntry(T);
   assert(entry.is<const TypeInfo*>() && "getting TypeInfo recursively!");
-  auto &ti = *entry.get<const TypeInfo*>();
-  assert(ti.isComplete());
-  return ti;
-}
-
-const TypeInfo *TypeConverter::tryGetCompleteTypeInfo(CanType T) {
-  auto entry = getTypeEntry(T);
-  if (!entry.is<const TypeInfo*>()) return nullptr;
-  auto &ti = *entry.get<const TypeInfo*>();
-  if (!ti.isComplete()) return nullptr;
-  return &ti;
+  return *entry.get<const TypeInfo*>();
 }
 
 ArchetypeType *TypeConverter::getExemplarArchetype(ArchetypeType *t) {
@@ -1449,8 +1446,7 @@ TypeCacheEntry TypeConverter::getTypeEntry(CanType canonicalTy) {
     // The type we got should be lowered, so lower it like a SILType.
     contextTy = getGenericEnvironment()->mapTypeIntoContext(
                   IGM.getSILModule(),
-                  SILType::getPrimitiveAddressType(contextTy))
-      .getSwiftRValueType();
+                  SILType::getPrimitiveAddressType(contextTy)).getASTType();
   }
   
   // Fold archetypes to unique exemplars. Any archetype with the same
@@ -1647,6 +1643,7 @@ TypeCacheEntry TypeConverter::convertType(CanType ty) {
     Size size;
     Alignment align;
     std::tie(llvmTy, size, align) = convertPrimitiveBuiltin(IGM, ty);
+    align = IGM.getCappedAlignment(align);
     return createPrimitive(llvmTy, size, align);
   }
 
@@ -1676,12 +1673,10 @@ TypeCacheEntry TypeConverter::convertType(CanType ty) {
   case TypeKind::GenericTypeParam:
   case TypeKind::DependentMember:
     llvm_unreachable("can't convert dependent type");
-  case TypeKind::UnmanagedStorage:
-    return convertUnmanagedStorageType(cast<UnmanagedStorageType>(ty));
-  case TypeKind::UnownedStorage:
-    return convertUnownedStorageType(cast<UnownedStorageType>(ty));
-  case TypeKind::WeakStorage:
-    return convertWeakStorageType(cast<WeakStorageType>(ty));
+#define REF_STORAGE(Name, ...) \
+  case TypeKind::Name##Storage: \
+    return convert##Name##StorageType(cast<Name##StorageType>(ty));
+#include "swift/AST/ReferenceStorage.def"
   case TypeKind::SILBlockStorage: {
     return convertBlockStorageType(cast<SILBlockStorageType>(ty));
   case TypeKind::SILBox:
@@ -1703,42 +1698,22 @@ const TypeInfo *TypeConverter::convertInOutType(InOutType *T) {
                          IGM.getPointerAlignment());
 }
 
-/// Convert an [unowned] storage type.  The implementation here
-/// depends on the underlying reference type.
-const TypeInfo *
-TypeConverter::convertUnownedStorageType(UnownedStorageType *refType) {
-  // The type may be optional.
-  CanType referent(refType->getReferentType());
-  if (auto referentObj = referent.getOptionalObjectType())
-    referent = referentObj;
-  assert(referent->allowsOwnership());
-  auto &referentTI = cast<ReferenceTypeInfo>(getCompleteTypeInfo(referent));
-  return referentTI.createUnownedStorageType(*this);
+/// Convert a reference storage type. The implementation here depends on the
+/// underlying reference type. The type may be optional.
+#define REF_STORAGE(Name, ...) \
+const TypeInfo * \
+TypeConverter::convert##Name##StorageType(Name##StorageType *refType) { \
+  CanType referent(refType->getReferentType()); \
+  bool isOptional = false; \
+  if (auto referentObj = referent.getOptionalObjectType()) { \
+    referent = referentObj; \
+    isOptional = true; \
+  } \
+  assert(referent->allowsOwnership()); \
+  auto &referentTI = cast<ReferenceTypeInfo>(getCompleteTypeInfo(referent)); \
+  return referentTI.create##Name##StorageType(*this, isOptional); \
 }
-
-/// Convert an @unowned(unsafe) storage type.  The implementation here
-/// depends on the underlying reference type.
-const TypeInfo *
-TypeConverter::convertUnmanagedStorageType(UnmanagedStorageType *refType) {
-  // The type may be optional.
-  CanType referent(refType->getReferentType());
-  if (auto referentObj = referent.getOptionalObjectType())
-    referent = referentObj;
-  assert(referent->allowsOwnership());
-  auto &referentTI = cast<ReferenceTypeInfo>(getCompleteTypeInfo(referent));
-  return referentTI.createUnmanagedStorageType(*this);
-}
-
-/// Convert a weak storage type.  The implementation here
-/// depends on the underlying reference type.
-const TypeInfo *
-TypeConverter::convertWeakStorageType(WeakStorageType *refType) {
-  CanType referent =
-      CanType(refType->getReferentType()->getOptionalObjectType());
-  assert(referent->allowsOwnership());
-  auto &referentTI = cast<ReferenceTypeInfo>(getCompleteTypeInfo(referent));
-  return referentTI.createWeakStorageType(*this);
-}
+#include "swift/AST/ReferenceStorage.def"
 
 static void overwriteForwardDecl(llvm::DenseMap<TypeBase*, TypeCacheEntry> &cache,
                                  TypeBase *key, const TypeInfo *result) {
@@ -1935,7 +1910,7 @@ const TypeInfo *TypeConverter::convertMetatypeType(MetatypeType *T) {
   return &getMetatypeTypeInfo(T->getRepresentation());
 }
 
-const LoadableTypeInfo &
+const TypeInfo &
 TypeConverter::getMetatypeTypeInfo(MetatypeRepresentation representation) {
   switch (representation) {
   case MetatypeRepresentation::Thin:

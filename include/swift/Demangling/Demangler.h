@@ -296,7 +296,6 @@ protected:
 
   Vector<NodePointer> NodeStack;
   Vector<NodePointer> Substitutions;
-  Vector<unsigned> PendingSubstitutions;
 
   static const int MaxNumWords = 26;
   StringRef Words[MaxNumWords];
@@ -454,8 +453,7 @@ protected:
   NodePointer addFuncSpecParamNumber(NodePointer Param,
                               FunctionSigSpecializationParamKind Kind);
 
-  NodePointer demangleSpecAttributes(Node::Kind SpecKind,
-                                     bool demangleUniqueID = false);
+  NodePointer demangleSpecAttributes(Node::Kind SpecKind);
 
   NodePointer demangleWitness();
   NodePointer demangleSpecialType();

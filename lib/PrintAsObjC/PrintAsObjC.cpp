@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2018 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -115,7 +115,7 @@ static StringRef maybeGetOSObjectBaseName(const clang::NamedDecl *decl) {
   // Hack: check to see if the name came from a macro in <os/object.h>.
   clang::SourceManager &sourceMgr = decl->getASTContext().getSourceManager();
   clang::SourceLocation expansionLoc =
-      sourceMgr.getImmediateExpansionRange(loc).first;
+      sourceMgr.getImmediateExpansionRange(loc).getBegin();
   clang::SourceLocation spellingLoc = sourceMgr.getSpellingLoc(expansionLoc);
 
   if (!sourceMgr.getFilename(spellingLoc).endswith("/os/object.h"))
@@ -193,11 +193,7 @@ public:
     assert(members.begin() != members.end());
 
     const DeclContext *origDC = (*members.begin())->getDeclContext();
-    auto *baseClass = dyn_cast<ClassDecl>(origDC);
-    if (!baseClass) {
-      Type extendedTy = cast<ExtensionDecl>(origDC)->getExtendedType();
-      baseClass = extendedTy->getClassOrBoundGenericClass();
-    }
+    auto *baseClass = origDC->getSelfClassDecl();
 
     os << "@interface " << getNameForObjC(baseClass);
     maybePrintObjCGenericParameters(baseClass);
@@ -338,8 +334,8 @@ private:
       os << "\n@interface " << customName;
     }
 
-    if (Type superTy = CD->getSuperclass())
-      os << " : " << getNameForObjC(superTy->getClassOrBoundGenericClass());
+    if (auto superDecl = CD->getSuperclassDecl())
+      os << " : " << getNameForObjC(superDecl);
     printProtocols(CD->getLocalProtocols(ConformanceLookupKind::OnlyExplicit));
     os << "\n";
     printMembers(CD->getMembers());
@@ -369,7 +365,7 @@ private:
     if (isEmptyExtensionDecl(ED))
       return;
 
-    auto baseClass = ED->getExtendedType()->getClassOrBoundGenericClass();
+    auto baseClass = ED->getSelfClassDecl();
 
     if (printAvailability(ED, PrintLeadingSpace::No))
       os << "\n";
@@ -421,7 +417,8 @@ private:
       os << ", " << customName
          << ", \"" << ED->getName() << "\"";
     }
-    os << ", " << (ED->isExhaustive(/*useDC*/nullptr) ? "closed" : "open")
+    os << ", "
+       << (ED->isFormallyExhaustive(/*useDC*/nullptr) ? "closed" : "open")
        << ") {\n";
 
     for (auto Elt : ED->getAllElements()) {
@@ -590,13 +587,10 @@ private:
 
     os << ")";
 
-    auto paramLists = AFD->getParameterLists();
-    assert(paramLists.size() == 2 && "not an ObjC-compatible method");
-
     auto selector = AFD->getObjCSelector();
     ArrayRef<Identifier> selectorPieces = selector.getSelectorPieces();
     
-    const auto &params = paramLists[1]->getArray();
+    const auto &params = AFD->getParameters()->getArray();
     unsigned paramIndex = 0;
     for (unsigned i = 0, n = selectorPieces.size(); i != n; ++i) {
       if (i > 0) os << ' ';
@@ -662,9 +656,9 @@ private:
         // inherits from NSObject.
         if (selectorIsInit(selector) && !ctor->getOverriddenDecl()) {
           auto container = ctor->getDeclContext();
-          auto *classDecl = container->getAsClassOrClassExtensionContext();
+          auto *classDecl = container->getSelfClassDecl();
           if (!classDecl) {
-            assert(container->getAsProtocolOrProtocolExtensionContext());
+            assert(container->getSelfProtocolDecl());
           } else {
             while (classDecl->hasSuperclass()) {
               classDecl = classDecl->getSuperclassDecl();
@@ -744,8 +738,7 @@ private:
     
     os << ' ' << FD->getAttrs().getAttribute<CDeclAttr>()->Name << '(';
     
-    assert(FD->getParameterLists().size() == 1 && "not a C-compatible func");
-    auto params = FD->getParameterLists().back();
+    auto params = FD->getParameters();
     if (params->size()) {
       interleave(*params,
                  [&](const ParamDecl *param) {
@@ -798,13 +791,12 @@ private:
         if (AvAttr->PlatformAgnostic == PlatformAgnosticAvailabilityKind::Unavailable) {
           // Availability for *
           if (!AvAttr->Rename.empty() && isa<ValueDecl>(D)) {
-            // NB: Don't bother getting obj-c names, we can't get one for the
             // rename
             maybePrintLeadingSpace();
             os << "SWIFT_UNAVAILABLE_MSG(\"'"
                << cast<ValueDecl>(D)->getBaseName()
                << "' has been renamed to '";
-            printEncodedString(AvAttr->Rename, false);
+            printRenameForDecl(AvAttr, cast<ValueDecl>(D), false);
             os << '\'';
             if (!AvAttr->Message.empty()) {
               os << ": ";
@@ -829,7 +821,7 @@ private:
             printEncodedString(AvAttr->Message);
             if (!AvAttr->Rename.empty()) {
               os << ", ";
-              printEncodedString(AvAttr->Rename);
+              printRenameForDecl(AvAttr, cast<ValueDecl>(D), true);
             }
             os << ")";
           } else {
@@ -903,10 +895,9 @@ private:
         }
       }
       if (!AvAttr->Rename.empty() && isa<ValueDecl>(D)) {
-        // NB: Don't bother getting obj-c names, we can't get one for the rename
         os << ",message=\"'" << cast<ValueDecl>(D)->getBaseName()
            << "' has been renamed to '";
-        printEncodedString(AvAttr->Rename, false);
+        printRenameForDecl(AvAttr, cast<ValueDecl>(D), false);
         os << '\'';
         if (!AvAttr->Message.empty()) {
           os << ": ";
@@ -920,6 +911,61 @@ private:
       os << ")";
     }
     return hasPrintedAnything;
+  }
+    
+  void printRenameForDecl(const AvailableAttr *AvAttr, const ValueDecl *D,
+                          bool includeQuotes) {
+    assert(!AvAttr->Rename.empty());
+    
+    auto renamedParsedDeclName = parseDeclName(AvAttr->Rename);
+    auto renamedDeclName = renamedParsedDeclName.formDeclName(D->getASTContext());
+    
+    auto declContext = D->getDeclContext();
+    const ValueDecl *renamedDecl = nullptr;
+    
+    if (isa<ClassDecl>(D) || isa<ProtocolDecl>(D)) {
+      UnqualifiedLookup lookup(renamedDeclName.getBaseIdentifier(),
+                               declContext->getModuleScopeContext(),
+                               nullptr,
+                               SourceLoc(),
+                               UnqualifiedLookup::Flags::TypeLookup);
+      renamedDecl = lookup.getSingleTypeResult();
+    } else {
+      SmallVector<ValueDecl *, 4> lookupResults;
+      declContext->lookupQualified(
+        declContext->getSelfNominalTypeDecl(),
+        renamedDeclName, NL_QualifiedDefault, lookupResults);
+      for (auto candidate : lookupResults) {
+        if (!shouldInclude(candidate))
+          continue;
+        
+        if (candidate->getKind() != D->getKind() ||
+            (candidate->isInstanceMember() !=
+             cast<ValueDecl>(D)->isInstanceMember()))
+          continue;
+        
+        if (isa<FuncDecl>(candidate) &&
+            (cast<FuncDecl>(candidate)->getParameters()->size() !=
+             cast<FuncDecl>(D)->getParameters()->size()))
+          continue;
+        
+        if (renamedDecl) {
+          // If we found a duplicated candidate then we would silently fail.
+          renamedDecl = nullptr;
+          break;
+        }
+        renamedDecl = candidate;
+      }
+    }
+    
+    if (renamedDecl) {
+      SmallString<128> scratch;
+      auto renamedObjCRuntimeName = renamedDecl->getObjCRuntimeName()
+        ->getString(scratch);
+      printEncodedString(renamedObjCRuntimeName, includeQuotes);
+    } else {
+      printEncodedString(AvAttr->Rename, includeQuotes);
+    }
   }
 
   void printSwift3ObjCDeprecatedInference(ValueDecl *VD) {
@@ -942,8 +988,7 @@ private:
     else
       os << "method";
     os << " '";
-    auto nominal =
-      VD->getDeclContext()->getAsNominalTypeOrNominalTypeExtensionContext();
+    auto nominal = VD->getDeclContext()->getSelfNominalTypeDecl();
     printEncodedString(nominal->getName().str(), /*includeQuotes=*/false);
     os << ".";
     SmallString<32> scratch;
@@ -1478,12 +1523,8 @@ private:
 
   bool printImportedAlias(const TypeAliasDecl *alias,
                           Optional<OptionalTypeKind> optionalKind) {
-    if (!alias->hasClangNode()) {
-      if (!alias->isObjC()) return false;
-
-      os << alias->getName();
-      return true;
-    }
+    if (!alias->hasClangNode())
+      return false;
 
     if (auto *clangTypeDecl =
           dyn_cast<clang::TypeDecl>(alias->getClangDecl())) {
@@ -1515,7 +1556,7 @@ private:
     if (printImportedAlias(alias, optionalKind))
       return;
 
-    visitPart(alias->getUnderlyingTypeLoc().getType(), optionalKind);
+    visitPart(aliasTy->getSinglyDesugaredType(), optionalKind);
   }
 
   void maybePrintTagKeyword(const TypeDecl *NTD) {
@@ -1733,14 +1774,14 @@ private:
       return;
     }
 
-    if (layout.superclass) {
-      auto *CD = layout.superclass->getClassOrBoundGenericClass();
+    if (auto superclass = layout.explicitSuperclass) {
+      auto *CD = superclass->getClassOrBoundGenericClass();
       assert(CD->isObjC());
       if (isMetatype) {
         os << "SWIFT_METATYPE(" << getNameForObjC(CD) << ")";
       } else {
         os << getNameForObjC(CD);
-        if (auto *BGT = layout.superclass->getAs<BoundGenericClassType>())
+        if (auto *BGT = superclass->getAs<BoundGenericClassType>())
           printGenericArgs(BGT);
       }
     } else {
@@ -1752,7 +1793,7 @@ private:
       protos.push_back(proto->getDecl());
     printProtocols(protos);
 
-    if (layout.superclass && !isMetatype)
+    if (layout.explicitSuperclass && !isMetatype)
       os << " *";
 
     printNullability(optionalKind);
@@ -1793,8 +1834,7 @@ private:
     assert(decl && "can't print canonicalized GenericTypeParamType");
 
     if (auto *extension = dyn_cast<ExtensionDecl>(decl->getDeclContext())) {
-      const ClassDecl *extendedClass =
-          extension->getAsClassOrClassExtensionContext();
+      const ClassDecl *extendedClass = extension->getSelfClassDecl();
       assert(extendedClass->isGeneric());
       assert(extension->getGenericParams()->size() ==
              extendedClass->getGenericParams()->size() &&
@@ -1841,20 +1881,15 @@ private:
   /// "(A) -> ((B) -> C)" becomes "C (^ (^)(A))(B)".
   void finishFunctionType(const FunctionType *FT) {
     os << ")(";
-    Type paramsTy = FT->getInput();
-    if (auto tupleTy = paramsTy->getAs<TupleType>()) {
-      if (FT->getParams().empty()) {
-        os << "void";
-      } else {
-        interleave(tupleTy->getElements(),
-                   [this](TupleTypeElt elt) {
-                     print(elt.getType(), OTK_None, elt.getName(),
-                           IsFunctionParam);
-                   },
-                   [this] { os << ", "; });
-      }
+    if (!FT->getParams().empty()) {
+      interleave(FT->getParams(),
+                 [this](const AnyFunctionType::Param &param) {
+                   print(param.getType(), OTK_None, param.getLabel(),
+                         IsFunctionParam);
+                 },
+                 [this] { os << ", "; });
     } else {
-      print(paramsTy, OTK_None, Identifier(), IsFunctionParam);
+      os << "void";
     }
     os << ")";
   }
@@ -1954,7 +1989,10 @@ class ReferencedTypeFinder : public TypeVisitor<ReferencedTypeFinder> {
   }
 
   void visitNameAliasType(NameAliasType *aliasTy) {
-    Callback(*this, aliasTy->getDecl());
+    if (aliasTy->getDecl()->hasClangNode())
+      Callback(*this, aliasTy->getDecl());
+    else
+      visit(aliasTy->getSinglyDesugaredType());
   }
 
   void visitParenType(ParenType *parenTy) {
@@ -1997,7 +2035,8 @@ class ReferencedTypeFinder : public TypeVisitor<ReferencedTypeFinder> {
   }
 
   void visitAnyFunctionType(AnyFunctionType *fnTy) {
-    visit(fnTy->getInput());
+    for (auto &param : fnTy->getParams())
+      visit(param.getType());
     visit(fnTy->getResult());
   }
 
@@ -2007,8 +2046,8 @@ class ReferencedTypeFinder : public TypeVisitor<ReferencedTypeFinder> {
 
   void visitProtocolCompositionType(ProtocolCompositionType *composition) {
     auto layout = composition->getExistentialLayout();
-    if (layout.superclass)
-      visit(layout.superclass);
+    if (auto superclass = layout.explicitSuperclass)
+      visit(superclass);
     for (auto proto : layout.getProtocols())
       visit(proto);
   }
@@ -2158,7 +2197,7 @@ public:
   }
 
   void forwardDeclare(const NominalTypeDecl *NTD,
-                      std::function<void (void)> Printer) {
+                      llvm::function_ref<void(void)> Printer) {
     if (NTD->getModuleContext()->isStdlibModule())
       return;
     auto &state = seenTypes[NTD];
@@ -2272,9 +2311,8 @@ public:
         } else if (auto PD = dyn_cast<ProtocolDecl>(TD)) {
           forwardDeclare(PD);
         } else if (auto TAD = dyn_cast<TypeAliasDecl>(TD)) {
-          (void)addImport(TD);
-          // Just in case, make sure the underlying type is visible too.
-          finder.visit(TAD->getUnderlyingTypeLoc().getType());
+          if (TAD->hasClangNode())
+            (void)addImport(TD);
         } else if (addImport(TD)) {
           return;
         } else if (auto ED = dyn_cast<EnumDecl>(TD)) {
@@ -2309,8 +2347,7 @@ public:
     bool allRequirementsSatisfied = true;
 
     const ClassDecl *superclass = nullptr;
-    if (Type superTy = CD->getSuperclass()) {
-      superclass = superTy->getClassOrBoundGenericClass();
+    if ((superclass = CD->getSuperclassDecl())) {
       allRequirementsSatisfied &= require(superclass);
     }
     for (auto proto : CD->getLocalProtocols(
@@ -2365,7 +2402,7 @@ public:
   bool writeExtension(const ExtensionDecl *ED) {
     bool allRequirementsSatisfied = true;
 
-    const ClassDecl *CD = ED->getExtendedType()->getClassOrBoundGenericClass();
+    const ClassDecl *CD = ED->getSelfClassDecl();
     allRequirementsSatisfied &= require(CD);
     for (auto proto : ED->getLocalProtocols())
       if (printer.shouldInclude(proto))
@@ -2438,7 +2475,7 @@ public:
            "#endif\n"
            "\n"
            "#pragma clang diagnostic ignored \"-Wauto-import\"\n"
-           "#include <objc/NSObject.h>\n"
+           "#include <Foundation/Foundation.h>\n"
            "#include <stdint.h>\n"
            "#include <stddef.h>\n"
            "#include <stdbool.h>\n"
@@ -2727,7 +2764,7 @@ public:
         return !printer.shouldInclude(VD);
 
       if (auto ED = dyn_cast<ExtensionDecl>(D)) {
-        auto baseClass = ED->getExtendedType()->getClassOrBoundGenericClass();
+        auto baseClass = ED->getSelfClassDecl();
         return !baseClass || !printer.shouldInclude(baseClass) ||
                baseClass->isForeign();
       }
@@ -2751,7 +2788,7 @@ public:
           return VD->getBaseName().userFacingName();
 
         if (auto ED = dyn_cast<ExtensionDecl>(D)) {
-          auto baseClass = ED->getExtendedType()->getClassOrBoundGenericClass();
+          auto baseClass = ED->getSelfClassDecl();
           return baseClass->getName().str();
         }
         llvm_unreachable("unknown top-level ObjC decl");

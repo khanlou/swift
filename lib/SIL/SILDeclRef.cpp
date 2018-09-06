@@ -40,7 +40,7 @@ swift::getMethodDispatch(AbstractFunctionDecl *method) {
 
   auto dc = method->getDeclContext();
 
-  if (dc->getAsClassOrClassExtensionContext()) {
+  if (dc->getSelfClassDecl()) {
     if (method->isDynamic())
       return MethodDispatch::Class;
 
@@ -145,8 +145,6 @@ SILDeclRef::SILDeclRef(SILDeclRef::Loc baseLoc,
   } else if (auto *ACE = baseLoc.dyn_cast<AbstractClosureExpr *>()) {
     loc = ACE;
     kind = Kind::Func;
-    assert(ACE->getParameterLists().size() >= 1 &&
-           "no param patterns for function?!");
   } else {
     llvm_unreachable("impossible SILDeclRef loc");
   }
@@ -275,12 +273,21 @@ SILLinkage SILDeclRef::getLinkage(ForDefinition_t forDefinition) const {
       return maybeAddExternal(SILLinkage::PublicNonABI);
   }
 
-  bool neverPublic = false;
+  enum class Limit {
+    /// No limit.
+    None,
+    /// The declaration is emitted on-demand; it should end up with internal
+    /// or shared linkage.
+    OnDemand,
+    /// The declaration should never be made public.
+    NeverPublic 
+  };
+  auto limit = Limit::None;
 
   // ivar initializers and destroyers are completely contained within the class
   // from which they come, and never get seen externally.
   if (isIVarInitializerOrDestroyer()) {
-    neverPublic = true;
+    limit = Limit::NeverPublic;
   }
 
   // Stored property initializers get the linkage of their containing type.
@@ -307,27 +314,50 @@ SILLinkage SILDeclRef::getLinkage(ForDefinition_t forDefinition) const {
     // FIXME: This should always be true.
     if (d->getDeclContext()->getParentModule()->getResilienceStrategy() ==
         ResilienceStrategy::Resilient)
-      neverPublic = true;
+      limit = Limit::NeverPublic;
   }
 
   // The global addressor is never public for resilient globals.
   if (kind == Kind::GlobalAccessor) {
     if (cast<VarDecl>(d)->isResilient()) {
-      neverPublic = true;
+      limit = Limit::NeverPublic;
     }
   }
 
-  switch (d->getEffectiveAccess()) {
+  // Forced-static-dispatch functions are created on-demand and have
+  // at best shared linkage.
+  if (auto fn = dyn_cast<FuncDecl>(d)) {
+    if (fn->hasForcedStaticDispatch()) {
+      limit = Limit::OnDemand;
+    }
+  }
+  
+  auto effectiveAccess = d->getEffectiveAccess();
+  
+  // Private setter implementations for an internal storage declaration should
+  // be internal as well, so that a dynamically-writable
+  // keypath can be formed from other files.
+  if (auto accessor = dyn_cast<AccessorDecl>(d)) {
+    if (accessor->isSetter()
+       && accessor->getStorage()->getEffectiveAccess() == AccessLevel::Internal)
+      effectiveAccess = AccessLevel::Internal;
+  }
+
+  switch (effectiveAccess) {
   case AccessLevel::Private:
   case AccessLevel::FilePrivate:
     return maybeAddExternal(SILLinkage::Private);
 
   case AccessLevel::Internal:
+    if (limit == Limit::OnDemand)
+      return SILLinkage::Shared;
     return maybeAddExternal(SILLinkage::Hidden);
 
   case AccessLevel::Public:
   case AccessLevel::Open:
-    if (neverPublic)
+    if (limit == Limit::OnDemand)
+      return SILLinkage::Shared;
+    if (limit == Limit::NeverPublic)
       return maybeAddExternal(SILLinkage::Hidden);
     return maybeAddExternal(SILLinkage::Public);
   }
@@ -445,7 +475,7 @@ IsSerialized_t SILDeclRef::isSerialized() const {
     if (kind == SILDeclRef::Kind::Allocator) {
       auto *ctor = cast<ConstructorDecl>(d);
       if (ctor->isDesignatedInit() &&
-          ctor->getDeclContext()->getAsClassOrClassExtensionContext()) {
+          ctor->getDeclContext()->getSelfClassDecl()) {
         if (ctor->getEffectiveAccess() >= AccessLevel::Public &&
             !ctor->hasClangNode())
           return IsSerialized;
@@ -653,7 +683,7 @@ std::string SILDeclRef::mangle(ManglingKind MKind) const {
 
   case SILDeclRef::Kind::GlobalAccessor:
     assert(!isCurried);
-    return mangler.mangleAccessorEntity(AccessorKind::IsMutableAddressor,
+    return mangler.mangleAccessorEntity(AccessorKind::MutableAddress,
                                         AddressorKind::Unsafe,
                                         cast<AbstractStorageDecl>(getDecl()),
                                         /*isStatic*/ false,
@@ -688,6 +718,14 @@ bool SILDeclRef::requiresNewVTableEntry() const {
     }
   }
   return false;
+}
+
+bool SILDeclRef::requiresNewWitnessTableEntry() const {
+  return requiresNewWitnessTableEntry(cast<AbstractFunctionDecl>(getDecl()));
+}
+
+bool SILDeclRef::requiresNewWitnessTableEntry(AbstractFunctionDecl *func) {
+  return func->getOverriddenDecls().empty();
 }
 
 SILDeclRef SILDeclRef::getOverridden() const {
@@ -735,6 +773,43 @@ SILDeclRef SILDeclRef::getNextOverriddenVTableEntry() const {
   return SILDeclRef();
 }
 
+SILDeclRef SILDeclRef::getOverriddenWitnessTableEntry() const {
+  ValueDecl *bestOverridden = nullptr;
+
+  SmallVector<ValueDecl *, 4> stack;
+  SmallPtrSet<ValueDecl *, 4> visited;
+  stack.push_back(getDecl());
+  visited.insert(getDecl());
+
+  while (!stack.empty()) {
+    auto current = stack.back();
+    stack.pop_back();
+
+    auto overriddenDecls = current->getOverriddenDecls();
+    if (overriddenDecls.empty()) {
+      // This entry introduced a witness table entry. Determine whether it is
+      // better than the best entry we've seen thus far.
+      if (!bestOverridden ||
+          ProtocolDecl::compare(
+                        cast<ProtocolDecl>(current->getDeclContext()),
+                        cast<ProtocolDecl>(bestOverridden->getDeclContext()))
+            < 0) {
+        bestOverridden = current;
+      }
+
+      continue;
+    }
+
+    // Add overridden declarations to the stack.
+    for (auto overridden : overriddenDecls) {
+      if (visited.insert(overridden).second)
+        stack.push_back(overridden);
+    }
+  }
+
+  return SILDeclRef(bestOverridden, kind, isCurried);
+}
+
 SILDeclRef SILDeclRef::getOverriddenVTableEntry() const {
   SILDeclRef cur = *this, next = *this;
   do {
@@ -771,7 +846,15 @@ SubclassScope SILDeclRef::getSubclassScope() const {
   if (context->isExtensionContext())
     return SubclassScope::NotApplicable;
 
-  auto *classType = context->getAsClassOrClassExtensionContext();
+  // Various forms of thunks don't either.
+  if (isThunk() || isForeign)
+    return SubclassScope::NotApplicable;
+
+  // Default arg generators only need to be visible in Swift 3.
+  if (isDefaultArgGenerator() && !context->getASTContext().isSwiftVersion3())
+    return SubclassScope::NotApplicable;
+
+  auto *classType = context->getSelfClassDecl();
   if (!classType || classType->isFinal())
     return SubclassScope::NotApplicable;
 
@@ -802,11 +885,9 @@ unsigned SILDeclRef::getParameterListCount() const {
   auto *vd = getDecl();
 
   if (auto *func = dyn_cast<AbstractFunctionDecl>(vd)) {
-    return func->getParameterLists().size();
+    return func->hasImplicitSelfDecl() ? 2 : 1;
   } else if (auto *ed = dyn_cast<EnumElementDecl>(vd)) {
     return ed->hasAssociatedValues() ? 2 : 1;
-  } else if (isa<DestructorDecl>(vd)) {
-    return 1;
   } else if (isa<ClassDecl>(vd)) {
     return 2;
   } else if (isa<VarDecl>(vd)) {

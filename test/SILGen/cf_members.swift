@@ -1,6 +1,4 @@
-// RUN: %target-swift-frontend -emit-silgen -enable-sil-ownership -I %S/../IDE/Inputs/custom-modules %s | %FileCheck %s
-
-// REQUIRES: objc_interop
+// RUN: %target-swift-emit-silgen -enable-sil-ownership -I %S/../IDE/Inputs/custom-modules %s -enable-objc-interop -I %S/Inputs/usr/include | %FileCheck %s
 
 import ImportAsMember
 
@@ -10,8 +8,8 @@ func makeMetatype() -> Struct1.Type { return Struct1.self }
 public func importAsUnaryInit() {
   // CHECK: function_ref @CCPowerSupplyCreateDangerous : $@convention(c) () -> @owned CCPowerSupply
   var a = CCPowerSupply(dangerous: ())
-  let f: () -> CCPowerSupply = CCPowerSupply.init(dangerous:)
-  a = f()
+  let f: (()) -> CCPowerSupply = CCPowerSupply.init(dangerous:)
+  a = f(())
 }
 
 // CHECK-LABEL: sil @$S10cf_members3foo{{[_0-9a-zA-Z]*}}F
@@ -47,7 +45,7 @@ public func foo(_ x: Double) {
   let a: (Double) -> Struct1 = Struct1.init(value:)
   // CHECK: apply [[BORROWED_A2]]([[X]])
   // CHECK: destroy_value [[A_COPY]]
-  // CHECK: end_borrow [[BORROWED_A]] from [[A]]
+  // CHECK: end_borrow [[BORROWED_A]]
   z = a(x)
 
   // TODO: Support @convention(c) references that only capture thin metatype
@@ -76,7 +74,7 @@ public func foo(_ x: Double) {
   let c: (Double) -> Struct1 = z.translate(radians:)
   // CHECK: apply [[BORROWED_C2]]([[X]])
   // CHECK: destroy_value [[C_COPY]]
-  // CHECK: end_borrow [[BORROWED_C]] from [[C]]
+  // CHECK: end_borrow [[BORROWED_C]]
   z = c(x)
   // CHECK: [[THUNK:%.*]] = function_ref [[THUNK_NAME]]
   // CHECK: [[THICK:%.*]] = thin_to_thick_function [[THUNK]]
@@ -113,7 +111,7 @@ public func foo(_ x: Double) {
   let f = z.scale
   // CHECK: apply [[BORROWED_F2]]([[X]])
   // CHECK: destroy_value [[F_COPY]]
-  // CHECK: end_borrow [[BORROWED_F]] from [[F]]
+  // CHECK: end_borrow [[BORROWED_F]]
   z = f(x)
   // CHECK: [[THUNK:%.*]] = function_ref @$SSo10IAMStruct1V5scaleyABSdFTcTO
   // CHECK: thin_to_thick_function [[THUNK]]
@@ -169,7 +167,7 @@ public func foo(_ x: Double) {
   let i = Struct1.staticMethod
   // CHECK: apply [[BORROWED_I2]]()
   // CHECK: destroy_value [[I_COPY]]
-  // CHECK: end_borrow [[BORROWED_I]] from [[I]]
+  // CHECK: end_borrow [[BORROWED_I]]
   y = i()
 
   // TODO: Support @convention(c) references that only capture thin metatype

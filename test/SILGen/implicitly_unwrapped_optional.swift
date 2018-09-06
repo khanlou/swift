@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name implicitly_unwrapped_optional -emit-silgen -enable-sil-ownership %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name implicitly_unwrapped_optional -enable-sil-ownership %s | %FileCheck %s
 
 func foo(f f: (() -> ())!) {
   var f: (() -> ())! = f
@@ -50,7 +50,7 @@ func tuple_bind(x x: (Int, String)!) -> String? {
   return x?.1
   // CHECK:   switch_enum {{%.*}}, case #Optional.some!enumelt.1: [[NONNULL:bb[0-9]+]], case #Optional.none!enumelt: [[NULL:bb[0-9]+]]
   // CHECK: [[NONNULL]](
-  // CHECK:   [[STRING:%.*]] = tuple_extract {{%.*}} : $(Int, String), 1
+  // CHECK:   [[STRING:%.*]] = destructure_tuple {{%.*}} : $(Int, String)
   // CHECK-NOT: destroy_value [[STRING]]
 }
 
@@ -75,7 +75,7 @@ func sr3758() {
   // CHECK: = apply [[BORROWED_CALLEE]]({{%.+}}) : $@callee_guaranteed (@in_guaranteed Optional<Any>) -> ()
   // CHECK: end_borrow [[BORROWED_CALLEE]]
   // destroy_value [[CALLEE]]
-  // CHECK: end_borrow [[BORROWED_F]] from [[F]]
+  // CHECK: end_borrow [[BORROWED_F]]
   // CHECK: destroy_value [[F]]
   let f: ((Any?) -> Void) = { (arg: Any!) in }
   f(nil)

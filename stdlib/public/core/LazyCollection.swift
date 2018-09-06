@@ -29,7 +29,7 @@ public protocol LazyCollectionProtocol: Collection, LazySequenceProtocol {
 
 extension LazyCollectionProtocol {
   // Lazy things are already lazy
-  @inlinable // FIXME(sil-serialize-all)
+  @inlinable // protocol-only
   public var lazy: LazyCollection<Elements> {
     return elements.lazy
   }
@@ -37,7 +37,7 @@ extension LazyCollectionProtocol {
 
 extension LazyCollectionProtocol where Elements: LazyCollectionProtocol {
   // Lazy things are already lazy
-  @inlinable // FIXME(sil-serialize-all)
+  @inlinable // protocol-only
   public var lazy: Elements {
     return elements
   }
@@ -94,20 +94,20 @@ extension LazyCollection : Sequence {
 
   @inlinable
   public func _copyToContiguousArray()
-     -> ContiguousArray<Base.Iterator.Element> {
+     -> ContiguousArray<Base.Element> {
     return _base._copyToContiguousArray()
   }
 
   @inlinable
   public func _copyContents(
-    initializing buf: UnsafeMutableBufferPointer<Iterator.Element>
-  ) -> (Iterator,UnsafeMutableBufferPointer<Iterator.Element>.Index) {
+    initializing buf: UnsafeMutableBufferPointer<Element>
+  ) -> (Iterator,UnsafeMutableBufferPointer<Element>.Index) {
     return _base._copyContents(initializing: buf)
   }
 
   @inlinable
   public func _customContainsEquatableElement(
-    _ element: Base.Iterator.Element
+    _ element: Base.Element
   ) -> Bool? {
     return _base._customContainsEquatableElement(element)
   }
@@ -174,18 +174,31 @@ extension LazyCollection : Collection {
     return _base.count
   }
 
-  // The following requirement enables dispatching for index(of:) when
-  // the element type is Equatable.
+  // The following requirement enables dispatching for firstIndex(of:) and
+  // lastIndex(of:) when the element type is Equatable.
 
   /// Returns `Optional(Optional(index))` if an element was found;
-  /// `nil` otherwise.
+  /// `Optional(nil)` if the element doesn't exist in the collection;
+  /// `nil` if a search was not performed.
   ///
-  /// - Complexity: O(*n*)
+  /// - Complexity: Better than O(*n*)
   @inlinable
   public func _customIndexOfEquatableElement(
     _ element: Element
   ) -> Index?? {
     return _base._customIndexOfEquatableElement(element)
+  }
+
+  /// Returns `Optional(Optional(index))` if an element was found;
+  /// `Optional(nil)` if the element doesn't exist in the collection;
+  /// `nil` if a search was not performed.
+  ///
+  /// - Complexity: Better than O(*n*)
+  @inlinable
+  public func _customLastIndexOfEquatableElement(
+    _ element: Element
+  ) -> Index?? {
+    return _base._customLastIndexOfEquatableElement(element)
   }
 
   /// Returns the first element of `self`, or `nil` if `self` is empty.
@@ -250,8 +263,3 @@ extension Slice: LazySequenceProtocol where Base: LazySequenceProtocol { }
 extension Slice: LazyCollectionProtocol where Base: LazyCollectionProtocol { }
 extension ReversedCollection: LazySequenceProtocol where Base: LazySequenceProtocol { }
 extension ReversedCollection: LazyCollectionProtocol where Base: LazyCollectionProtocol { }
-
-@available(*, deprecated, renamed: "LazyCollection")
-public typealias LazyBidirectionalCollection<T> = LazyCollection<T> where T : BidirectionalCollection
-@available(*, deprecated, renamed: "LazyCollection")
-public typealias LazyRandomAccessCollection<T> = LazyCollection<T> where T : RandomAccessCollection

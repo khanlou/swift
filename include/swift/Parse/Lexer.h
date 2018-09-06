@@ -51,6 +51,11 @@ enum class TriviaRetentionMode {
   WithTrivia,
 };
 
+enum class HashbangMode : bool {
+  Disallowed,
+  Allowed,
+};
+
 /// Kinds of conflict marker which the lexer might encounter.
 enum class ConflictMarkerKind {
   /// A normal or diff3 conflict marker, initiated by at least 7 "<"s,
@@ -98,6 +103,9 @@ class Lexer {
   /// file.  This enables the 'sil' keyword.
   const bool InSILMode;
 
+  /// True if we should skip past a `#!` line at the start of the file.
+  const bool IsHashbangAllowed;
+
   const CommentRetentionMode RetainComments;
 
   const TriviaRetentionMode TriviaRetention;
@@ -128,7 +136,7 @@ class Lexer {
   /// everything.
   Lexer(const PrincipalTag &, const LangOptions &LangOpts,
         const SourceManager &SourceMgr, unsigned BufferID,
-        DiagnosticEngine *Diags, bool InSILMode,
+        DiagnosticEngine *Diags, bool InSILMode, HashbangMode HashbangAllowed,
         CommentRetentionMode RetainComments,
         TriviaRetentionMode TriviaRetention);
 
@@ -151,13 +159,14 @@ public:
   Lexer(
       const LangOptions &Options, const SourceManager &SourceMgr,
       unsigned BufferID, DiagnosticEngine *Diags, bool InSILMode,
+      HashbangMode HashbangAllowed = HashbangMode::Disallowed,
       CommentRetentionMode RetainComments = CommentRetentionMode::None,
       TriviaRetentionMode TriviaRetention = TriviaRetentionMode::WithoutTrivia);
 
   /// \brief Create a lexer that scans a subrange of the source buffer.
   Lexer(const LangOptions &Options, const SourceManager &SourceMgr,
         unsigned BufferID, DiagnosticEngine *Diags, bool InSILMode,
-        CommentRetentionMode RetainComments,
+        HashbangMode HashbangAllowed, CommentRetentionMode RetainComments,
         TriviaRetentionMode TriviaRetention, unsigned Offset,
         unsigned EndOffset);
 
@@ -190,6 +199,15 @@ public:
   void lex(Token &Result) {
     syntax::Trivia LeadingTrivia, TrailingTrivia;
     lex(Result, LeadingTrivia, TrailingTrivia);
+  }
+
+  /// Reset the lexer's buffer pointer to \p Offset bytes after the buffer
+  /// start.
+  void resetToOffset(size_t Offset) {
+    assert(BufferStart + Offset <= BufferEnd && "Offset after buffer end");
+
+    CurPtr = BufferStart + Offset;
+    lexImpl();
   }
 
   bool isKeepingComments() const {
@@ -346,12 +364,13 @@ public:
     enum : char { Literal, Expr } Kind;
     // Loc+Length for the segment inside the string literal, without quotes.
     SourceLoc Loc;
-    unsigned Length, IndentToStrip;
+    unsigned Length, IndentToStrip, CustomDelimiterLen;
     bool IsFirstSegment, IsLastSegment;
 
     static StringSegment getLiteral(SourceLoc Loc, unsigned Length,
                                     bool IsFirstSegment, bool IsLastSegment,
-                                    unsigned IndentToStrip) {
+                                    unsigned IndentToStrip,
+                                    unsigned CustomDelimiterLen) {
       StringSegment Result;
       Result.Kind = Literal;
       Result.Loc = Loc;
@@ -359,6 +378,7 @@ public:
       Result.IsFirstSegment = IsFirstSegment;
       Result.IsLastSegment = IsLastSegment;
       Result.IndentToStrip = IndentToStrip;
+      Result.CustomDelimiterLen = CustomDelimiterLen;
       return Result;
     }
     
@@ -370,6 +390,7 @@ public:
       Result.IsFirstSegment = false;
       Result.IsLastSegment = false;
       Result.IndentToStrip = 0;
+      Result.CustomDelimiterLen = 0;
       return Result;
     }
 
@@ -386,13 +407,14 @@ public:
                                            SmallVectorImpl<char> &Buffer,
                                            bool IsFirstSegment = false,
                                            bool IsLastSegment = false,
-                                           unsigned IndentToStrip = 0);
+                                           unsigned IndentToStrip = 0,
+                                           unsigned CustomDelimiterLen = 0);
   StringRef getEncodedStringSegment(StringSegment Segment,
                                     SmallVectorImpl<char> &Buffer) const {
     return getEncodedStringSegment(
         StringRef(getBufferPtrForSourceLoc(Segment.Loc), Segment.Length),
         Buffer, Segment.IsFirstSegment, Segment.IsLastSegment,
-        Segment.IndentToStrip);
+        Segment.IndentToStrip, Segment.CustomDelimiterLen);
   }
 
   /// \brief Given a string literal token, separate it into string/expr segments
@@ -456,7 +478,8 @@ private:
     return diagnose(Loc, Diagnostic(DiagID, std::forward<ArgTypes>(Args)...));
   }
 
-  void formToken(tok Kind, const char *TokStart, bool MultilineString = false);
+  void formToken(tok Kind, const char *TokStart, bool IsMultilineString = false,
+                 unsigned CustomDelimiterLen = 0);
   void formEscapedIdentifierToken(const char *TokStart);
 
   /// Advance to the end of the line.
@@ -480,10 +503,10 @@ private:
   void lexTrivia(syntax::Trivia &T, bool IsForTrailingTrivia);
   static unsigned lexUnicodeEscape(const char *&CurPtr, Lexer *Diags);
 
-  unsigned lexCharacter(const char *&CurPtr,
-                        char StopQuote, bool EmitDiagnostics,
-                        bool MultilineString = false);
-  void lexStringLiteral();
+  unsigned lexCharacter(const char *&CurPtr, char StopQuote,
+                        bool EmitDiagnostics, bool IsMultilineString = false,
+                        unsigned CustomDelimiterLen = 0);
+  void lexStringLiteral(unsigned CustomDelimiterLen = 0);
   void lexEscapedIdentifier();
 
   void tryLexEditorPlaceholder();

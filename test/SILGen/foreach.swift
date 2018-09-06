@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name foreach -emit-silgen -enable-sil-ownership %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name foreach -enable-sil-ownership %s | %FileCheck %s
 
 //////////////////
 // Declarations //
@@ -111,7 +111,7 @@ func trivialStructBreak(_ xx: [Int]) {
 // CHECK:   [[PROJECT_ITERATOR_BOX:%.*]] = project_box [[ITERATOR_BOX]]
 // CHECK:   [[BORROWED_ARRAY_STACK:%.*]] = alloc_stack $Array<Int>
 // CHECK:   store_borrow [[ARRAY]] to [[BORROWED_ARRAY_STACK]]
-// CHECK:   [[MAKE_ITERATOR_FUNC:%.*]] = function_ref @$Ss10CollectionPss16IndexingIteratorVyxG0C0RtzrlE04makeC0AEyF : $@convention(method) <τ_0_0 where τ_0_0 : Collection, τ_0_0.Iterator == IndexingIterator<τ_0_0>> (@in_guaranteed τ_0_0) -> @out IndexingIterator<τ_0_0>
+// CHECK:   [[MAKE_ITERATOR_FUNC:%.*]] = function_ref @$SSlss16IndexingIteratorVyxG0B0RtzrlE04makeB0ACyF : $@convention(method) <τ_0_0 where τ_0_0 : Collection, τ_0_0.Iterator == IndexingIterator<τ_0_0>> (@in_guaranteed τ_0_0) -> @out IndexingIterator<τ_0_0>
 // CHECK:   apply [[MAKE_ITERATOR_FUNC]]<[Int]>([[PROJECT_ITERATOR_BOX]], [[BORROWED_ARRAY_STACK]])
 // CHECK:   br [[LOOP_DEST:bb[0-9]+]]
 //
@@ -214,7 +214,7 @@ func existentialBreak(_ xx: [P]) {
 // CHECK:   [[PROJECT_ITERATOR_BOX:%.*]] = project_box [[ITERATOR_BOX]]
 // CHECK:   [[BORROWED_ARRAY_STACK:%.*]] = alloc_stack $Array<P>
 // CHECK:   store_borrow [[ARRAY]] to [[BORROWED_ARRAY_STACK]]
-// CHECK:   [[MAKE_ITERATOR_FUNC:%.*]] = function_ref @$Ss10CollectionPss16IndexingIteratorVyxG0C0RtzrlE04makeC0AEyF : $@convention(method) <τ_0_0 where τ_0_0 : Collection, τ_0_0.Iterator == IndexingIterator<τ_0_0>> (@in_guaranteed τ_0_0) -> @out IndexingIterator<τ_0_0>
+// CHECK:   [[MAKE_ITERATOR_FUNC:%.*]] = function_ref @$SSlss16IndexingIteratorVyxG0B0RtzrlE04makeB0ACyF : $@convention(method) <τ_0_0 where τ_0_0 : Collection, τ_0_0.Iterator == IndexingIterator<τ_0_0>> (@in_guaranteed τ_0_0) -> @out IndexingIterator<τ_0_0>
 // CHECK:   apply [[MAKE_ITERATOR_FUNC]]<[P]>([[PROJECT_ITERATOR_BOX]], [[BORROWED_ARRAY_STACK]])
 // CHECK:   [[ELT_STACK:%.*]] = alloc_stack $Optional<P>
 // CHECK:   br [[LOOP_DEST:bb[0-9]+]]
@@ -377,7 +377,7 @@ func genericStructBreak<T>(_ xx: [GenericStruct<T>]) {
 // CHECK:   [[PROJECT_ITERATOR_BOX:%.*]] = project_box [[ITERATOR_BOX]]
 // CHECK:   [[BORROWED_ARRAY_STACK:%.*]] = alloc_stack $Array<GenericStruct<T>>
 // CHECK:   store_borrow [[ARRAY]] to [[BORROWED_ARRAY_STACK]]
-// CHECK:   [[MAKE_ITERATOR_FUNC:%.*]] = function_ref @$Ss10CollectionPss16IndexingIteratorVyxG0C0RtzrlE04makeC0AEyF : $@convention(method) <τ_0_0 where τ_0_0 : Collection, τ_0_0.Iterator == IndexingIterator<τ_0_0>> (@in_guaranteed τ_0_0) -> @out IndexingIterator<τ_0_0>
+// CHECK:   [[MAKE_ITERATOR_FUNC:%.*]] = function_ref @$SSlss16IndexingIteratorVyxG0B0RtzrlE04makeB0ACyF : $@convention(method) <τ_0_0 where τ_0_0 : Collection, τ_0_0.Iterator == IndexingIterator<τ_0_0>> (@in_guaranteed τ_0_0) -> @out IndexingIterator<τ_0_0>
 // CHECK:   apply [[MAKE_ITERATOR_FUNC]]<[GenericStruct<T>]>([[PROJECT_ITERATOR_BOX]], [[BORROWED_ARRAY_STACK]])
 // CHECK:   [[ELT_STACK:%.*]] = alloc_stack $Optional<GenericStruct<T>>
 // CHECK:   br [[LOOP_DEST:bb[0-9]+]]
@@ -482,7 +482,7 @@ func genericCollectionBreak<T : Collection>(_ xx: T) {
   funcEnd()
 }
 
-// CHECK-LABEL: sil hidden @$S7foreach30genericCollectionContinueBreakyyxs0C0RzlF : $@convention(thin) <T where T : Collection> (@in_guaranteed T) -> () {
+// CHECK-LABEL: sil hidden @$S7foreach30genericCollectionContinueBreakyyxSlRzlF : $@convention(thin) <T where T : Collection> (@in_guaranteed T) -> () {
 // CHECK: bb0([[COLLECTION:%.*]] : @trivial $*T):
 // CHECK:   [[ITERATOR_BOX:%.*]] = alloc_box $<τ_0_0 where τ_0_0 : Collection> { var τ_0_0.Iterator } <T>, var, name "$x$generator"
 // CHECK:   [[PROJECT_ITERATOR_BOX:%.*]] = project_box [[ITERATOR_BOX]]
@@ -538,7 +538,7 @@ func genericCollectionBreak<T : Collection>(_ xx: T) {
 // CHECK:   destroy_value [[ITERATOR_BOX]]
 // CHECK:   [[FUNC_END_FUNC:%.*]] = function_ref @funcEnd : $@convention(thin) () -> ()
 // CHECK:   apply [[FUNC_END_FUNC]]()
-// CHECK: } // end sil function '$S7foreach30genericCollectionContinueBreakyyxs0C0RzlF'
+// CHECK: } // end sil function '$S7foreach30genericCollectionContinueBreakyyxSlRzlF'
 func genericCollectionContinueBreak<T : Collection>(_ xx: T) {
   for x in xx {
     if (condition()) {
@@ -563,59 +563,29 @@ func genericCollectionContinueBreak<T : Collection>(_ xx: T) {
 // CHECK-LABEL: sil hidden @$S7foreach13tupleElementsyySayAA1CC_ADtGF
 func tupleElements(_ xx: [(C, C)]) {
   // CHECK: bb3([[PAYLOAD:%.*]] : @owned $(C, C)):
-  // CHECK: [[BORROWED_PAYLOAD:%.*]] = begin_borrow [[PAYLOAD]]
-  // CHECK: [[A:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 0
-  // CHECK: [[COPY_A:%.*]] = copy_value [[A]]
-  // CHECK: [[B:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 1
-  // CHECK: [[COPY_B:%.*]] = copy_value [[B]]
-  // CHECK: end_borrow [[BORROWED_PAYLOAD]] from [[PAYLOAD]]
-  // CHECK: destroy_value [[COPY_B]]
-  // CHECK: destroy_value [[COPY_A]]
-  // CHECK: destroy_value [[PAYLOAD]]
+  // CHECK: ([[A:%.*]], [[B:%.*]]) = destructure_tuple [[PAYLOAD]]
+  // CHECK: destroy_value [[B]]
+  // CHECK: destroy_value [[A]]
   for (a, b) in xx {}
   // CHECK: bb7([[PAYLOAD:%.*]] : @owned $(C, C)):
-  // CHECK: [[BORROWED_PAYLOAD:%.*]] = begin_borrow [[PAYLOAD]]
-  // CHECK: [[A:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 0
-  // CHECK: [[COPY_A:%.*]] = copy_value [[A]]
-  // CHECK: [[B:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 1
-  // CHECK: [[COPY_B:%.*]] = copy_value [[B]]
-  // CHECK: destroy_value [[COPY_B]]
-  // CHECK: end_borrow [[BORROWED_PAYLOAD]] from [[PAYLOAD]]
-  // CHECK: destroy_value [[COPY_A]]
-  // CHECK: destroy_value [[PAYLOAD]]
+  // CHECK: ([[A:%.*]], [[B:%.*]]) = destructure_tuple [[PAYLOAD]]
+  // CHECK: destroy_value [[B]]
+  // CHECK: destroy_value [[A]]
   for (a, _) in xx {}
   // CHECK: bb11([[PAYLOAD:%.*]] : @owned $(C, C)):
-  // CHECK: [[BORROWED_PAYLOAD:%.*]] = begin_borrow [[PAYLOAD]]
-  // CHECK: [[A:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 0
-  // CHECK: [[COPY_A:%.*]] = copy_value [[A]]
-  // CHECK: [[B:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 1
-  // CHECK: [[COPY_B:%.*]] = copy_value [[B]]
-  // CHECK: destroy_value [[COPY_A]]
-  // CHECK: end_borrow [[BORROWED_PAYLOAD]] from [[PAYLOAD]]
-  // CHECK: destroy_value [[COPY_B]]
-  // CHECK: destroy_value [[PAYLOAD]]
+  // CHECK: ([[A:%.*]], [[B:%.*]]) = destructure_tuple [[PAYLOAD]]
+  // CHECK: destroy_value [[A]]
+  // CHECK: destroy_value [[B]]
   for (_, b) in xx {}
   // CHECK: bb15([[PAYLOAD:%.*]] : @owned $(C, C)):
-  // CHECK: [[BORROWED_PAYLOAD:%.*]] = begin_borrow [[PAYLOAD]]
-  // CHECK: [[A:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 0
-  // CHECK: [[COPY_A:%.*]] = copy_value [[A]]
-  // CHECK: [[B:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 1
-  // CHECK: [[COPY_B:%.*]] = copy_value [[B]]
-  // CHECK: destroy_value [[COPY_B]]
-  // CHECK: destroy_value [[COPY_A]]
-  // CHECK: end_borrow [[BORROWED_PAYLOAD]] from [[PAYLOAD]]
-  // CHECK: destroy_value [[PAYLOAD]]
+  // CHECK: ([[A:%.*]], [[B:%.*]]) = destructure_tuple [[PAYLOAD]]
+  // CHECK: destroy_value [[B]]
+  // CHECK: destroy_value [[A]]
   for (_, _) in xx {}
   // CHECK: bb19([[PAYLOAD:%.*]] : @owned $(C, C)):
-  // CHECK: [[BORROWED_PAYLOAD:%.*]] = begin_borrow [[PAYLOAD]]
-  // CHECK: [[A:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 0
-  // CHECK: [[COPY_A:%.*]] = copy_value [[A]]
-  // CHECK: [[B:%.*]] = tuple_extract [[BORROWED_PAYLOAD]] : $(C, C), 1
-  // CHECK: [[COPY_B:%.*]] = copy_value [[B]]
-  // CHECK: destroy_value [[COPY_B]]
-  // CHECK: destroy_value [[COPY_A]]
-  // CHECK: end_borrow [[BORROWED_PAYLOAD]] from [[PAYLOAD]]
-  // CHECK: destroy_value [[PAYLOAD]]
+  // CHECK: ([[A:%.*]], [[B:%.*]]) = destructure_tuple [[PAYLOAD]]
+  // CHECK: destroy_value [[B]]
+  // CHECK: destroy_value [[A]]
   for  _     in xx {}
 }
 

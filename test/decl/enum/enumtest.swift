@@ -222,8 +222,8 @@ func f() {
 }
 
 func union_error(_ a: ZeroOneTwoThree) {
-  var _ : ZeroOneTwoThree = .Zero(1) // expected-error {{member 'Zero' takes no arguments}}
-  var _ : ZeroOneTwoThree = .Zero() // expected-error {{member 'Zero' is not a function}} {{34-36=}}
+  var _ : ZeroOneTwoThree = .Zero(1) // expected-error {{enum case 'Zero' has no associated values}}
+  var _ : ZeroOneTwoThree = .Zero() // expected-error {{enum case 'Zero' has no associated values}} {{34-36=}}
   var _ : ZeroOneTwoThree = .One // expected-error {{member 'One' expects argument of type 'Int'}}
   var _ : ZeroOneTwoThree = .foo // expected-error {{type 'ZeroOneTwoThree' has no member 'foo'}}
   var _ : ZeroOneTwoThree = .foo() // expected-error {{type 'ZeroOneTwoThree' has no member 'foo'}}
@@ -322,4 +322,7 @@ func useSynthesizedMember() {
 enum Lens<T> {
   case foo(inout T) // expected-error {{'inout' may only be used on parameters}}
   case bar(inout T, Int) // expected-error {{'inout' may only be used on parameters}}
+
+  case baz((inout T) -> ()) // ok
+  case quux((inout T, inout T) -> ()) // ok
 }

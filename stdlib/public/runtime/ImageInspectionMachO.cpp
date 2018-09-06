@@ -31,16 +31,13 @@ using namespace swift;
 namespace {
 /// The Mach-O section name for the section containing protocol descriptor
 /// references. This lives within SEG_TEXT.
-constexpr const char ProtocolsSection[] = "__swift4_protos";
+constexpr const char ProtocolsSection[] = "__swift5_protos";
 /// The Mach-O section name for the section containing protocol conformances.
 /// This lives within SEG_TEXT.
-constexpr const char ProtocolConformancesSection[] = "__swift4_proto";
+constexpr const char ProtocolConformancesSection[] = "__swift5_proto";
 /// The Mach-O section name for the section containing type references.
 /// This lives within SEG_TEXT.
-constexpr const char TypeMetadataRecordSection[] = "__swift4_types";
-/// The Mach-O section name for the section containing type field references.
-/// This lives within SEG_TEXT.
-constexpr const char TypeFieldRecordSection[] = "__swift4_fieldmd";
+constexpr const char TypeMetadataRecordSection[] = "__swift5_types";
 
 #if __POINTER_WIDTH__ == 64
 using mach_header_platform = mach_header_64;
@@ -57,7 +54,7 @@ void addImageCallback(const mach_header *mh, intptr_t vmaddr_slide) {
   assert(mh->magic == MH_MAGIC_64 && "loaded non-64-bit image?!");
 #endif
   
-  // Look for a __swift4_proto section.
+  // Look for a __swift5_proto section.
   unsigned long size;
   const uint8_t *section =
   getsectiondata(reinterpret_cast<const mach_header_platform *>(mh),
@@ -88,12 +85,6 @@ void swift::initializeTypeMetadataRecordLookup() {
     addImageCallback<TypeMetadataRecordSection,
                      addImageTypeMetadataRecordBlockCallback>);
   
-}
-
-void swift::initializeTypeFieldLookup() {
-  _dyld_register_func_for_add_image(
-      addImageCallback<TypeFieldRecordSection,
-                       addImageTypeFieldDescriptorBlockCallback>);
 }
 
 int swift::lookupSymbol(const void *address, SymbolInfo *info) {

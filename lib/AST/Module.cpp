@@ -34,6 +34,7 @@
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/Basic/Compiler.h"
 #include "swift/Basic/SourceManager.h"
+#include "swift/Basic/Statistic.h"
 #include "swift/Parse/Token.h"
 #include "swift/Syntax/SyntaxNodes.h"
 #include "clang/Basic/Module.h"
@@ -291,8 +292,7 @@ void SourceLookupCache::lookupClassMembers(AccessPathTy accessPath,
         continue;
 
       for (ValueDecl *vd : member.second) {
-        auto *nominal = vd->getDeclContext()
-           ->getAsNominalTypeOrNominalTypeExtensionContext();
+        auto *nominal = vd->getDeclContext()->getSelfNominalTypeDecl();
         if (nominal && nominal->getName() == accessPath.front().first)
           consumer.foundDecl(vd, DeclVisibilityKind::DynamicLookup);
       }
@@ -326,8 +326,7 @@ void SourceLookupCache::lookupClassMember(AccessPathTy accessPath,
   
   if (!accessPath.empty()) {
     for (ValueDecl *vd : iter->second) {
-      auto *nominal = vd->getDeclContext()
-         ->getAsNominalTypeOrNominalTypeExtensionContext();
+      auto *nominal = vd->getDeclContext()->getSelfNominalTypeDecl();
       if (nominal && nominal->getName() == accessPath.front().first)
         results.push_back(vd);
     }
@@ -354,13 +353,13 @@ void SourceLookupCache::invalidate() {
 ModuleDecl::ModuleDecl(Identifier name, ASTContext &ctx)
   : DeclContext(DeclContextKind::Module, nullptr),
     TypeDecl(DeclKind::Module, &ctx, name, SourceLoc(), { }),
-    Flags({0, 0, 0}) {
+    Flags() {
   ctx.addDestructorCleanup(*this);
   setImplicit();
   setInterfaceType(ModuleType::get(this));
 
   // validateDecl() should return immediately given a ModuleDecl.
-  setValidationStarted();
+  setValidationToChecked();
 
   setAccess(AccessLevel::Public);
 }
@@ -411,7 +410,7 @@ void ModuleDecl::lookupMember(SmallVectorImpl<ValueDecl*> &results,
   size_t oldSize = results.size();
   bool alreadyInPrivateContext = false;
 
-  auto containerDecl = container->getAsDeclOrDeclExtensionContext();
+  auto containerDecl = container->getAsDecl();
   // If FileUnit, then use FileUnit::lookupValue instead.
   assert(containerDecl != nullptr && "This context does not support lookup.");
 
@@ -592,10 +591,6 @@ ModuleDecl::lookupConformance(Type type, ProtocolDecl *protocol) {
   // existential's list of conformances and the existential conforms to
   // itself.
   if (type->isExistentialType()) {
-    // FIXME: Recursion break.
-    if (!protocol->hasValidSignature())
-      return None;
-
     // If the existential type cannot be represented or the protocol does not
     // conform to itself, there's no point in looking further.
     if (!protocol->existentialConformsToSelf())
@@ -611,15 +606,29 @@ ModuleDecl::lookupConformance(Type type, ProtocolDecl *protocol) {
 
     // If the existential is class-constrained, the class might conform
     // concretely.
-    if (layout.superclass) {
-      if (auto result = lookupConformance(layout.superclass, protocol))
+    if (auto superclass = layout.explicitSuperclass) {
+      if (auto result = lookupConformance(superclass, protocol))
         return result;
     }
 
     // Otherwise, the existential might conform abstractly.
     for (auto proto : layout.getProtocols()) {
       auto *protoDecl = proto->getDecl();
-      if (protoDecl == protocol || protoDecl->inheritsFrom(protocol))
+
+      // If we found the protocol we're looking for, return an abstract
+      // conformance to it.
+      if (protoDecl == protocol)
+        return ProtocolConformanceRef(protocol);
+
+      // If the protocol has a superclass constraint, we might conform
+      // concretely.
+      if (auto superclass = protoDecl->getSuperclass()) {
+        if (auto result = lookupConformance(superclass, protocol))
+          return result;
+      }
+
+      // Now check refined protocols.
+      if (protoDecl->inheritsFrom(protocol))
         return ProtocolConformanceRef(protocol);
     }
 
@@ -835,8 +844,7 @@ lookupOperatorDeclForName(const FileUnit &File, SourceLoc Loc, Identifier Name,
 {
   switch (File.getKind()) {
   case FileUnitKind::Builtin:
-  case FileUnitKind::Derived:
-    // The Builtin module declares no operators, nor do derived units.
+    // The Builtin module declares no operators.
     return nullptr;
   case FileUnitKind::Source:
     break;
@@ -1127,24 +1135,19 @@ bool ModuleDecl::isSystemModule() const {
   return false;
 }
 
-template<bool respectVisibility, typename Callback>
-static bool forAllImportedModules(ModuleDecl *topLevel,
-                                  ModuleDecl::AccessPathTy thisPath,
-                                  bool includePrivateTopLevelImports,
-                                  const Callback &fn) {
+template<bool respectVisibility>
+static bool
+forAllImportedModules(ModuleDecl *topLevel, ModuleDecl::AccessPathTy thisPath,
+                      llvm::function_ref<bool(ModuleDecl::ImportedModule)> fn) {
   using ImportedModule = ModuleDecl::ImportedModule;
   using AccessPathTy = ModuleDecl::AccessPathTy;
   
   llvm::SmallSet<ImportedModule, 32, ModuleDecl::OrderImportedModules> visited;
   SmallVector<ImportedModule, 32> stack;
 
-  // Even if we're processing the top-level module like any other, we may
-  // still want to include non-exported modules.
-  ModuleDecl::ImportFilter filter = respectVisibility ? ModuleDecl::ImportFilter::Public
-                                                      : ModuleDecl::ImportFilter::All;
-  ModuleDecl::ImportFilter topLevelFilter =
-    includePrivateTopLevelImports ? ModuleDecl::ImportFilter::All : filter;
-  topLevel->getImportedModules(stack, topLevelFilter);
+  auto filter = respectVisibility ? ModuleDecl::ImportFilter::Public
+                                  : ModuleDecl::ImportFilter::All;
+  topLevel->getImportedModules(stack, filter);
 
   // Make sure the top-level module is first; we want pre-order-ish traversal.
   AccessPathTy overridingPath;
@@ -1182,11 +1185,10 @@ static bool forAllImportedModules(ModuleDecl *topLevel,
   return true;
 }
 
-bool ModuleDecl::forAllVisibleModules(AccessPathTy thisPath,
-                                      bool includePrivateTopLevelImports,
-                                  llvm::function_ref<bool(ImportedModule)> fn) {
-  return forAllImportedModules<true>(this, thisPath,
-                                     includePrivateTopLevelImports, fn);
+bool
+ModuleDecl::forAllVisibleModules(AccessPathTy thisPath,
+                                 llvm::function_ref<bool(ImportedModule)> fn) {
+  return forAllImportedModules<true>(this, thisPath, fn);
 }
 
 bool FileUnit::forAllVisibleModules(
@@ -1214,13 +1216,14 @@ void ModuleDecl::collectLinkLibraries(LinkLibraryCallback callback) {
 
 void
 SourceFile::collectLinkLibraries(ModuleDecl::LinkLibraryCallback callback) const {
-
-  const_cast<SourceFile *>(this)->forAllVisibleModules([&](swift::ModuleDecl::ImportedModule import) {
+  forAllImportedModules<false>(getParentModule(), /*thisPath*/{},
+                               [=](ModuleDecl::ImportedModule import) -> bool {
     swift::ModuleDecl *next = import.second;
     if (next->getName() == getParentModule()->getName())
-      return;
+      return true;
 
     next->collectLinkLibraries(callback);
+    return true;
   });
 }
 
@@ -1375,6 +1378,7 @@ bool SourceFile::shouldCollectToken() const {
   switch (Kind) {
   case SourceFileKind::Library:
   case SourceFileKind::Main:
+  case SourceFileKind::Interface:
     return (bool)AllCorrectedTokens;
   case SourceFileKind::REPL:
   case SourceFileKind::SIL:
@@ -1386,6 +1390,7 @@ bool SourceFile::shouldBuildSyntaxTree() const {
   switch (Kind) {
   case SourceFileKind::Library:
   case SourceFileKind::Main:
+  case SourceFileKind::Interface:
     return SyntaxInfo.Enable;
   case SourceFileKind::REPL:
   case SourceFileKind::SIL:
@@ -1540,4 +1545,29 @@ const ModuleDecl* ModuleEntity::getAsSwiftModule() const {
   if (auto SwiftMod = Mod.dyn_cast<const ModuleDecl*>())
     return SwiftMod;
   return nullptr;
+}
+
+// See swift/Basic/Statistic.h for declaration: this enables tracing SourceFiles, is
+// defined here to avoid too much layering violation / circular linkage
+// dependency.
+
+struct SourceFileTraceFormatter : public UnifiedStatsReporter::TraceFormatter {
+  void traceName(const void *Entity, raw_ostream &OS) const {
+    if (!Entity)
+      return;
+    const SourceFile *SF = static_cast<const SourceFile *>(Entity);
+    OS << llvm::sys::path::filename(SF->getFilename());
+  }
+  void traceLoc(const void *Entity, SourceManager *SM,
+                clang::SourceManager *CSM, raw_ostream &OS) const {
+    // SourceFiles don't have SourceLocs of their own; they contain them.
+  }
+};
+
+static SourceFileTraceFormatter TF;
+
+template<>
+const UnifiedStatsReporter::TraceFormatter*
+FrontendStatsTracer::getTraceFormatter<const SourceFile *>() {
+  return &TF;
 }

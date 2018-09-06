@@ -1,4 +1,6 @@
-// RUN: %target-swift-frontend -module-name without_actually_escaping -emit-silgen -enable-sil-ownership %s | %FileCheck %s
+// RUN: %empty-directory(%t)
+// RUN: %build-silgen-test-overlays
+// RUN: %target-swift-emit-silgen(mock-sdk: -sdk %S/Inputs -I %t) -module-name without_actually_escaping -enable-sil-ownership %s -sdk %S/Inputs -enable-objc-interop | %FileCheck %s
 
 // REQUIRES: objc_interop
 
@@ -11,13 +13,13 @@ typealias Callback = @convention(block) () -> Void
 // CHECK:  [[C1:%.*]] = copy_block [[ARG]]
 // CHECK:  [[B1:%.*]] = begin_borrow [[C1]]
 // CHECK:  [[C2:%.*]] = copy_value [[B1]]
-// CHECK:  [[CVT:%.*]] = convert_function [[C2]] : $@convention(block) @noescape () -> () to $@convention(block) () -> ()
+// CHECK:  [[CVT:%.*]] = convert_function [[C2]] : $@convention(block) @noescape () -> () to [without_actually_escaping] $@convention(block) () -> ()
 // CHECK:  [[B2:%.*]] = begin_borrow [[CVT]]
 // CHECK:  [[FN:%.*]] = function_ref @$S25without_actually_escaping9testBlock5blockyyyXB_tFyyyXBXEfU_
 // CHECK:  apply [[FN]]([[B2]])
-// CHECK:  end_borrow [[B2]] from [[CVT]]
+// CHECK:  end_borrow [[B2]]
 // CHECK:  destroy_value [[CVT]]
-// CHECK:  end_borrow [[B1]] from [[C1]]
+// CHECK:  end_borrow [[B1]]
 // CHECK:  destroy_value [[C1]]
 // CHECK:  return
 

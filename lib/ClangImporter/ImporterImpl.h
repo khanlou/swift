@@ -28,8 +28,8 @@
 #include "swift/AST/Module.h"
 #include "swift/AST/Type.h"
 #include "swift/AST/ForeignErrorConvention.h"
+#include "swift/Basic/FileTypes.h"
 #include "swift/Basic/StringExtras.h"
-#include "swift/Strings.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclVisitor.h"
 #include "clang/Basic/IdentifierTable.h"
@@ -108,8 +108,8 @@ enum class ImportTypeKind {
   /// \brief Import the type of a literal value.
   Value,
 
-  /// \brief Import the type of a literal value that can be bridged.
-  BridgedValue,
+  /// \brief Import the type of an Objective-C generic argument.
+  ObjCCollectionElement,
 
   /// \brief Import the declared type of a variable.
   Variable,
@@ -196,8 +196,14 @@ enum class Bridgeability {
 ///
 /// In either case we end up losing sugar at some uses sites, so this is more
 /// about what the right default is.
-static inline Bridgeability getTypedefBridgeability(clang::QualType type) {
-  return type->isBlockPointerType() ? Bridgeability::Full : Bridgeability::None;
+static inline Bridgeability getTypedefBridgeability(
+                                          const clang::TypedefNameDecl *decl,
+                                          clang::QualType type) {
+    return decl->hasAttr<clang::SwiftBridgedTypedefAttr>()
+      ? Bridgeability::Full
+        : type->isBlockPointerType()
+        ? Bridgeability::Full
+          : Bridgeability::None;
 }
 
 /// \brief Describes the kind of the C type that can be mapped to a stdlib
@@ -619,11 +625,8 @@ public:
     } else if (auto *CD = dyn_cast<ConstructorDecl>(decl)) {
       assert(CD->getInterfaceType());
       ty = CD->getResultInterfaceType();
-    } else if (auto *SD = dyn_cast<SubscriptDecl>(decl)) {
-      ty = SD->getElementInterfaceType();
     } else {
-      auto *VD = cast<VarDecl>(decl);
-      ty = VD->getInterfaceType()->getReferenceStorageReferent();
+      ty = cast<AbstractStorageDecl>(decl)->getValueInterfaceType();
     }
 #endif
 
@@ -958,6 +961,11 @@ public:
   /// bound of "Hashable", which is used to validate NSDictionary/NSSet.
   bool matchesHashableBound(Type type);
 
+  /// \brief Determines whether the type declared by the given declaration
+  /// is over-aligned.
+  bool isOverAligned(const clang::TypeDecl *typeDecl);
+  bool isOverAligned(clang::QualType type);
+
   /// \brief Look up and attempt to import a Clang declaration with
   /// the given name.
   Decl *importDeclByName(StringRef name);
@@ -1026,10 +1034,13 @@ public:
       bool resugarNSErrorPointer = true);
 
   /// \brief Import the given Clang type into Swift, returning the
-  /// Swift type and whether we should treat it as an optional that is
-  /// implicitly unwrapped.
+  /// Swift parameters and result type and whether we should treat it
+  /// as an optional that is implicitly unwrapped.
   ///
-  /// \returns A pair of the imported type and whether we should treat
+  /// The parameters are returned via \c parameterList, and the result type is
+  /// the return type of this method.
+  ///
+  /// \returns A pair of the imported result type and whether we should treat
   /// it as an optional that is implicitly unwrapped. The returned
   /// type is null if it cannot be represented in Swift.
 
@@ -1049,9 +1060,6 @@ public:
   ///   to system APIs.
   /// \param name The name of the function.
   /// \param[out] parameterList The parameters visible inside the function body.
-  ///
-  /// \returns the imported function type, or null if the type cannot be
-  /// imported.
   ImportedType importFunctionType(DeclContext *dc,
                                   const clang::FunctionDecl *clangDecl,
                                   ArrayRef<const clang::ParmVarDecl *> params,
@@ -1101,7 +1109,10 @@ public:
                        StringRef argumentLabel, bool isFirstParameter,
                        bool isLastParameter, importer::NameImporter &);
 
-  /// Import the type of an Objective-C method.
+  /// Import the parameter and return types of an Objective-C method.
+  ///
+  /// The parameters are returned via \c bodyParams, and the result type is
+  /// the return type of this method.
   ///
   /// Note that this is not appropriate to use for property accessor methods.
   /// Use #importAccessorMethodType instead.
@@ -1119,7 +1130,7 @@ public:
   /// \param kind Controls whether we're building a type for a method that
   ///   needs special handling.
   ///
-  /// \returns the imported function type, or null if the type cannot be
+  /// \returns the imported result type, or null if the type cannot be
   /// imported.
   ImportedType
   importMethodType(const DeclContext *dc,
@@ -1133,6 +1144,9 @@ public:
   /// Import the type of an Objective-C method that will be imported as an
   /// accessor for \p property.
   ///
+  /// The parameters are returned via \c bodyParams, and the result type is
+  /// the return type of this method.
+  ///
   /// \param dc The context the method is being imported into.
   /// \param property The property the method will be an accessor for.
   /// \param clangDecl The underlying declaration.
@@ -1143,7 +1157,7 @@ public:
   ///   accessor.
   /// \param[out] params The patterns visible inside the function body.
   ///
-  /// \returns the imported function type, or null if the type cannot be
+  /// \returns the imported result type, or null if the type cannot be
   /// imported.
   ImportedType importAccessorMethodType(const DeclContext *dc,
                                         const clang::ObjCPropertyDecl *property,
@@ -1285,7 +1299,7 @@ public:
     if (auto ASD = dyn_cast<AbstractStorageDecl>(D))
       ASD->setSetterAccess(access);
     // All imported decls are constructed fully validated.
-    D->setValidationStarted();
+    D->setValidationToChecked();
     if (auto AFD = dyn_cast<AbstractFunctionDecl>(static_cast<Decl *>(D)))
       AFD->setNeedsNewVTableEntry(false);
     return D;
@@ -1346,7 +1360,9 @@ public:
   void forEachDistinctName(
       const clang::NamedDecl *decl,
       llvm::function_ref<bool(importer::ImportedName,
-                              importer::ImportNameVersion)> action);
+                              importer::ImportNameVersion)> action) {
+    getNameImporter().forEachDistinctImportName(decl, CurrentVersion, action);
+  }
 
   /// Dump the Swift-specific name lookup tables we generate.
   void dumpSwiftLookupTables();
@@ -1354,7 +1370,7 @@ public:
   void setSinglePCHImport(Optional<std::string> PCHFilename) {
     if (PCHFilename.hasValue()) {
       assert(llvm::sys::path::extension(PCHFilename.getValue())
-                 .endswith(PCH_EXTENSION) &&
+                 .endswith(file_types::getExtension(file_types::TY_PCH)) &&
              "Single PCH imported filename doesn't have .pch extension!");
     }
     SinglePCHImport = PCHFilename;
@@ -1374,6 +1390,10 @@ namespace importer {
 
 /// Whether we should suppress the import of the given Clang declaration.
 bool shouldSuppressDeclImport(const clang::Decl *decl);
+
+/// Identifies certain UIKit constants that used to have overlay equivalents,
+/// but are now renamed using the swift_name attribute.
+bool isSpecialUIKitStructZeroProperty(const clang::NamedDecl *decl);
 
 /// Finds a particular kind of nominal by looking through typealiases.
 template <typename T>

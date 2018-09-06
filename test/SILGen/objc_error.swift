@@ -2,7 +2,7 @@
 // RUN: %empty-directory(%t)
 // RUN: %build-clang-importer-objc-overlays
 
-// RUN: %target-swift-frontend(mock-sdk: %clang-importer-sdk-nosource -I %t) -module-name objc_error -emit-silgen -enable-sil-ownership %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen(mock-sdk: %clang-importer-sdk-nosource -I %t) -module-name objc_error -enable-sil-ownership %s | %FileCheck %s
 
 // REQUIRES: objc_interop
 
@@ -115,7 +115,7 @@ class MyNSError : NSError {
 // CHECK:   [[EXISTENTIAL_REF:%.*]] = init_existential_ref [[UPCAST]]
 // CHECK:   [[BORROWED_EXISTENTIAL_REF:%.*]] = begin_borrow [[EXISTENTIAL_REF]]
 // CHECK:   [[COPY_BORROWED_EXISTENTIAL_REF:%.*]] = copy_value [[BORROWED_EXISTENTIAL_REF]]
-// CHECK:   end_borrow [[BORROWED_EXISTENTIAL_REF]] from [[EXISTENTIAL_REF]]
+// CHECK:   end_borrow [[BORROWED_EXISTENTIAL_REF]]
 // CHECK:   destroy_value [[EXISTENTIAL_REF]]
 // CHECK:   return [[COPY_BORROWED_EXISTENTIAL_REF]]
 // CHECK: } // end sil function '$S10objc_error14eraseMyNSError{{[_0-9a-zA-Z]*}}F'
@@ -159,8 +159,10 @@ extension Error {
     // CHECK: [[FAILURE]]:
     // CHECK: [[ERROR_BOX:%[0-9]+]] = alloc_existential_box $Error, $Self
     // CHECK: [[ERROR_PROJECTED:%[0-9]+]] = project_existential_box $Self in [[ERROR_BOX]] : $Error
+    // CHECK: store [[ERROR_BOX]] to [init] [[ERROR_BUF:%.*]] :
     // CHECK: copy_addr [take] [[COPY]] to [initialization] [[ERROR_PROJECTED]] : $*Self
-    // CHECK: br [[CONTINUATION]]([[ERROR_BOX]] : $Error)
+    // CHECK: [[ERROR_BOX2:%.*]] = load [take] [[ERROR_BUF]]
+    // CHECK: br [[CONTINUATION]]([[ERROR_BOX2]] : $Error)
 
     // CHECK: [[CONTINUATION]]([[ERROR_ARG:%[0-9]+]] : @owned $Error):
 		return self as NSError

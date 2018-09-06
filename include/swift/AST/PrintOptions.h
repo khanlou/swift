@@ -112,8 +112,8 @@ public:
 };
 
 struct ShouldPrintChecker {
-  virtual bool shouldPrint(const Decl *D, PrintOptions &Options);
-  bool shouldPrint(const Pattern *P, PrintOptions &Options);
+  virtual bool shouldPrint(const Decl *D, const PrintOptions &Options);
+  bool shouldPrint(const Pattern *P, const PrintOptions &Options);
   virtual ~ShouldPrintChecker() = default;
 };
 
@@ -146,9 +146,6 @@ struct PrintOptions {
 
   /// \brief Whether to print variable initializers.
   bool VarInitializers = false;
-
-  /// \brief Whether to print a placeholder for default parameters.
-  bool PrintDefaultParameterPlaceholder = true;
 
   /// \brief Whether to print enum raw value expressions.
   bool EnumRawValues = false;
@@ -325,6 +322,9 @@ struct PrintOptions {
   /// for optionals that are nested within other optionals.
   bool PrintOptionalAsImplicitlyUnwrapped = false;
 
+  /// Replaces the name of private and internal properties of types with '_'.
+  bool OmitNameOfInaccessibleProperties = false;
+
   /// \brief Print dependent types as references into this generic environment.
   GenericEnvironment *GenericEnv = nullptr;
 
@@ -363,6 +363,9 @@ struct PrintOptions {
 
   BracketOptions BracketOptions;
 
+  // This is explicit to guarantee that it can be called from LLDB.
+  PrintOptions() {}
+
   bool excludeAttrKind(AnyAttrKind K) const {
     if (std::any_of(ExcludeAttrList.begin(), ExcludeAttrList.end(),
                     [K](AnyAttrKind other) { return other == K; }))
@@ -378,7 +381,6 @@ struct PrintOptions {
     PrintOptions result;
     result.TypeDefinitions = true;
     result.VarInitializers = true;
-    result.PrintDefaultParameterPlaceholder = true;
     result.PrintDocumentationComments = true;
     result.PrintRegularClangComments = true;
     result.PrintLongAttrsOnSeparateLines = true;
@@ -423,6 +425,14 @@ struct PrintOptions {
     result.PrintDocumentationComments = true;
     return result;
   }
+
+  /// Retrieve the set of options suitable for stable textual interfaces.
+  ///
+  /// This is a format that will be parsed again later, so the output must be
+  /// consistent and well-formed.
+  ///
+  /// \see swift::emitModuleInterface
+  static PrintOptions printTextualInterfaceFile();
 
   static PrintOptions printModuleInterface();
   static PrintOptions printTypeInterface(Type T);
@@ -498,7 +508,6 @@ struct PrintOptions {
   static PrintOptions printQuickHelpDeclaration() {
     PrintOptions PO;
     PO.EnumRawValues = true;
-    PO.PrintDefaultParameterPlaceholder = true;
     PO.PrintImplicitAttrs = false;
     PO.PrintFunctionRepresentationAttrs = false;
     PO.PrintDocumentationComments = false;

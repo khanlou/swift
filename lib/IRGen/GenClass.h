@@ -48,7 +48,6 @@ namespace irgen {
   class StructLayout;
   class TypeInfo;
   
-  enum class ReferenceCounting : unsigned char;
   enum class ClassDeallocationKind : unsigned char;
   enum class FieldAccess : uint8_t;
   
@@ -127,16 +126,6 @@ namespace irgen {
                                     llvm::Value *selfValue,
                                     llvm::Value *metadataValue);
 
-  /// Emit the constant fragile instance size of the class, or null if the class
-  /// does not have fixed layout. For resilient classes this does not
-  /// correspond to the runtime alignment of instances of the class.
-  llvm::Constant *tryEmitClassConstantFragileInstanceSize(IRGenModule &IGM,
-                                                   ClassDecl *theClass);
-  /// Emit the constant fragile instance alignment mask of the class, or null if
-  /// the class does not have fixed layout. For resilient classes this does not
-  /// correspond to the runtime alignment of instances of the class.
-  llvm::Constant *tryEmitClassConstantFragileInstanceAlignMask(IRGenModule &IGM,
-                                                        ClassDecl *theClass);
   /// Emit the constant fragile offset of the given property inside an instance
   /// of the class.
   llvm::Constant *
@@ -144,13 +133,13 @@ namespace irgen {
                                                   SILType baseType,
                                                   VarDecl *field);
                                                   
-  unsigned getClassFieldIndex(IRGenModule &IGM,
-                              SILType baseType,
-                              VarDecl *field);
-    
   FieldAccess getClassFieldAccess(IRGenModule &IGM,
                                   SILType baseType,
                                   VarDecl *field);
+
+  Size getClassFieldOffset(IRGenModule &IGM,
+                           SILType baseType,
+                           VarDecl *field);
 
   /// Creates a layout for the class \p classType with allocated tail elements
   /// \p tailTypes.
@@ -159,31 +148,16 @@ namespace irgen {
   StructLayout *getClassLayoutWithTailElems(IRGenModule &IGM, SILType classType,
                                             llvm::ArrayRef<SILType> tailTypes);
 
-  /// What reference counting mechanism does a class-like type use?
-  ReferenceCounting getReferenceCountingForType(IRGenModule &IGM,
-                                                CanType type);
-
   ClassDecl *getRootClassForMetaclass(IRGenModule &IGM, ClassDecl *theClass);
 
-  /// Does the class metadata for the given class require dynamic
-  /// initialization beyond what can be achieved automatically by
-  /// the runtime?
-  bool doesClassMetadataRequireDynamicInitialization(IRGenModule &IGM,
-                                                     ClassDecl *theClass);
-    
-  /// If the superclass came from another module, we may have dropped
-  /// stored properties due to the Swift language version availability of
-  /// their types. In these cases we can't precisely lay out the ivars in
-  /// the class object at compile time so we need to do runtime layout.
-  bool classHasIncompleteLayout(IRGenModule &IGM,
-                                ClassDecl *theClass);
+  /// Does the given class have resilient ancestry, or is the class itself
+  /// generic?
+  bool doesClassMetadataRequireRelocation(IRGenModule &IGM,
+                                          ClassDecl *theClass);
 
-  /// Load the fragile instance size and alignment mask from a reference to
-  /// class type metadata of the given type.
-  std::pair<llvm::Value *, llvm::Value *>
-  emitClassFragileInstanceSizeAndAlignMask(IRGenFunction &IGF,
-                                           ClassDecl *theClass,
-                                           llvm::Value *metadata);
+  /// Does the class have a non-fixed layout, or generic ancestry?
+  bool doesClassMetadataRequireInitialization(IRGenModule &IGM,
+                                              ClassDecl *theClass);
 
   /// Load the instance size and alignment mask from a reference to
   /// class type metadata of the given type.

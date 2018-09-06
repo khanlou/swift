@@ -17,27 +17,27 @@
 //===----------------------------------------------------------------------===//
 
 #include "../SwiftShims/GlobalObjects.h"
+#include "../SwiftShims/LibcShims.h"
 #include "swift/Runtime/Metadata.h"
 #include "swift/Runtime/Debug.h"
 #include <stdlib.h>
-#include <random>
 
 namespace swift {
-// FIXME(ABI)#76 : does this declaration need SWIFT_RUNTIME_STDLIB_INTERFACE?
+// FIXME(ABI)#76 : does this declaration need SWIFT_RUNTIME_STDLIB_API?
 // _direct type metadata for Swift._EmptyArrayStorage
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 ClassMetadata CLASS_METADATA_SYM(s18_EmptyArrayStorage);
 
 // _direct type metadata for Swift._RawNativeDictionaryStorage
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 ClassMetadata CLASS_METADATA_SYM(s27_RawNativeDictionaryStorage);
 
 // _direct type metadata for Swift._RawNativeSetStorage
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 ClassMetadata CLASS_METADATA_SYM(s20_RawNativeSetStorage);
 } // namespace swift
 
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 swift::_SwiftEmptyArrayStorage swift::_swiftEmptyArrayStorage = {
   // HeapObject header;
   {
@@ -51,7 +51,7 @@ swift::_SwiftEmptyArrayStorage swift::_swiftEmptyArrayStorage = {
   }
 };
 
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 swift::_SwiftEmptyDictionaryStorage swift::_swiftEmptyDictionaryStorage = {
   // HeapObject header;
   {
@@ -79,7 +79,7 @@ swift::_SwiftEmptyDictionaryStorage swift::_swiftEmptyDictionaryStorage = {
   0 // int entries; (zero'd bits)
 };
 
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 swift::_SwiftEmptySetStorage swift::_swiftEmptySetStorage = {
   // HeapObject header;
   {
@@ -116,18 +116,10 @@ static swift::_SwiftHashingParameters initializeHashingParameters() {
   if (determinism && 0 == strcmp(determinism, "1")) {
     return { 0, 0, true };
   }
-#if defined(__APPLE__)
-  // Use arc4random if available.
   __swift_uint64_t seed0 = 0, seed1 = 0;
-  arc4random_buf(&seed0, sizeof(seed0));
-  arc4random_buf(&seed1, sizeof(seed1));
+  swift::_stdlib_random(&seed0, sizeof(seed0));
+  swift::_stdlib_random(&seed1, sizeof(seed1));
   return { seed0, seed1, false };
-#else
-  std::random_device randomDevice;
-  std::mt19937_64 engine(randomDevice());
-  std::uniform_int_distribution<__swift_uint64_t> distribution;
-  return { distribution(engine), distribution(engine), false };
-#endif
 }
 
 SWIFT_ALLOWED_RUNTIME_GLOBAL_CTOR_BEGIN
@@ -136,7 +128,7 @@ swift::_SwiftHashingParameters swift::_swift_stdlib_Hashing_parameters =
 SWIFT_ALLOWED_RUNTIME_GLOBAL_CTOR_END
 
 
-SWIFT_RUNTIME_STDLIB_INTERFACE
+SWIFT_RUNTIME_STDLIB_API
 void swift::_swift_instantiateInertHeapObject(void *address,
                                               const HeapMetadata *metadata) {
   ::new (address) HeapObject{metadata};
@@ -150,7 +142,7 @@ namespace llvm { namespace hashing { namespace detail {
   // hidden visibility, making this all internal to the dynamic library.
   // Systems that statically link the Swift runtime into applications (e.g. on
   // Linux) need this to handle the case when the app already uses LLVM.
-  size_t LLVM_ATTRIBUTE_WEAK fixed_seed_override = 0;
+  uint64_t LLVM_ATTRIBUTE_WEAK fixed_seed_override = 0;
 } // namespace detail
 } // namespace hashing
 } // namespace llvm

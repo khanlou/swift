@@ -22,6 +22,7 @@
 #include "SwiftTargetInfo.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/Module.h"
+#include "swift/AST/ReferenceCounting.h"
 #include "swift/Basic/ClusteredBitVector.h"
 #include "swift/Basic/LLVM.h"
 #include "swift/Basic/OptimizationMode.h"
@@ -98,7 +99,7 @@ namespace swift {
   class SourceLoc;
   class SourceFile;
   class Type;
-  enum class TypeMetadataRecordKind : unsigned;
+  enum class TypeReferenceKind : unsigned;
 
 namespace Lowering {
   class TypeConverter;
@@ -108,6 +109,7 @@ namespace irgen {
   class Address;
   class ClangTypeConverter;
   class ClassMetadataLayout;
+  class ConformanceInfo;
   class DebugTypeInfo;
   class EnumImplStrategy;
   class EnumMetadataLayout;
@@ -127,13 +129,13 @@ namespace irgen {
   class NominalMetadataLayout;
   class OutliningMetadataCollector;
   class ProtocolInfo;
+  enum class ProtocolInfoKind : uint8_t;
   class Signature;
   class StructMetadataLayout;
   struct SymbolicMangling;
   class TypeConverter;
   class TypeInfo;
   enum class ValueWitness : unsigned;
-  enum class ReferenceCounting : unsigned char;
 
 class IRGenModule;
 
@@ -357,6 +359,8 @@ public:
     noteUseOfTypeGlobals(type, false, requireMetadata);
   }
 
+  void noteUseOfAnyParentTypeMetadata(NominalTypeDecl *type);
+
 private:
   void noteUseOfTypeGlobals(NominalTypeDecl *type,
                             bool isUseOfMetadata,
@@ -393,6 +397,8 @@ public:
 
   /// Return the effective triple used by clang.
   llvm::Triple getEffectiveClangTriple();
+
+  const llvm::DataLayout &getClangDataLayout();
 };
 
 class ConstantReference {
@@ -420,13 +426,13 @@ public:
 
 /// A reference to a declared type entity.
 class TypeEntityReference {
-  TypeMetadataRecordKind Kind;
+  TypeReferenceKind Kind;
   llvm::Constant *Value;
 public:
-  TypeEntityReference(TypeMetadataRecordKind kind, llvm::Constant *value)
+  TypeEntityReference(TypeReferenceKind kind, llvm::Constant *value)
     : Kind(kind), Value(value) {}
 
-  TypeMetadataRecordKind getKind() const { return Kind; }
+  TypeReferenceKind getKind() const { return Kind; }
   llvm::Constant *getValue() const { return Value; }
 };
 
@@ -497,6 +503,7 @@ public:
     llvm::IntegerType *MetadataKindTy;
     llvm::IntegerType *OnceTy;
     llvm::IntegerType *FarRelativeAddressTy;
+    llvm::IntegerType *ProtocolDescriptorRefTy;
   };
   llvm::IntegerType *ObjCBoolTy;       /// i8 or i1
   union {
@@ -513,8 +520,9 @@ public:
   llvm::StructType *RefCountedStructTy;/// %swift.refcounted = type { ... }
   Size RefCountedStructSize;     /// sizeof(%swift.refcounted)
   llvm::PointerType *RefCountedPtrTy;  /// %swift.refcounted*
-  llvm::PointerType *WeakReferencePtrTy;/// %swift.weak_reference*
-  llvm::PointerType *UnownedReferencePtrTy;/// %swift.unowned_reference*
+#define CHECKED_REF_STORAGE(Name, ...) \
+  llvm::PointerType *Name##ReferencePtrTy; /// %swift. #name _reference*
+#include "swift/AST/ReferenceStorage.def"
   llvm::Constant *RefCountedNull;      /// %swift.refcounted* null
   llvm::StructType *FunctionPairTy;    /// { i8*, %swift.refcounted* }
   llvm::StructType *NoEscapeFunctionPairTy;    /// { i8*, %swift.opaque* }
@@ -525,6 +533,8 @@ public:
     llvm::StructType *TypeMetadataResponseTy;   /// { %swift.type*, iSize }
     llvm::StructType *TypeMetadataDependencyTy; /// { %swift.type*, iSize }
   };
+  llvm::StructType *OffsetPairTy;      /// { iSize, iSize }
+  llvm::StructType *FullTypeLayoutTy;  /// %swift.full_type_layout = { ... }
   llvm::PointerType *TupleTypeMetadataPtrTy; /// %swift.tuple_type*
   llvm::StructType *FullHeapMetadataStructTy; /// %swift.full_heapmetadata = type { ... }
   llvm::PointerType *FullHeapMetadataPtrTy;/// %swift.full_heapmetadata*
@@ -556,6 +566,7 @@ public:
   llvm::PointerType *TypeContextDescriptorPtrTy;
   llvm::StructType *ClassContextDescriptorTy;
   llvm::StructType *MethodDescriptorStructTy; /// %swift.method_descriptor
+  llvm::StructType *MethodOverrideDescriptorStructTy; /// %swift.method_override_descriptor
   llvm::StructType *TypeMetadataRecordTy;
   llvm::PointerType *TypeMetadataRecordPtrTy;
   llvm::StructType *FieldDescriptorTy;
@@ -565,6 +576,8 @@ public:
   llvm::StructType *OpenedErrorTripleTy; /// { %swift.opaque*, %swift.type*, i8** }
   llvm::PointerType *OpenedErrorTriplePtrTy; /// { %swift.opaque*, %swift.type*, i8** }*
   llvm::PointerType *WitnessTablePtrPtrTy;   /// i8***
+
+  llvm::GlobalVariable *TheTrivialPropertyDescriptor = nullptr;
 
   /// Used to create unique names for class layout types with tail allocated
   /// elements.
@@ -617,7 +630,7 @@ public:
 
   llvm::Type *getReferenceType(ReferenceCounting style);
 
-  static bool isUnownedReferenceAddressOnly(ReferenceCounting style) {
+  static bool isLoadableReferenceAddressOnly(ReferenceCounting style) {
     switch (style) {
     case ReferenceCounting::Native:
       return false;
@@ -629,7 +642,7 @@ public:
 
     case ReferenceCounting::Bridge:
     case ReferenceCounting::Error:
-      llvm_unreachable("unowned references to this type are not supported");
+      llvm_unreachable("loadable references to this type are not supported");
     }
 
     llvm_unreachable("Not a valid ReferenceCounting.");
@@ -642,15 +655,16 @@ public:
   const SpareBitVector &getFunctionPointerSpareBits() const;
   const SpareBitVector &getWitnessTablePtrSpareBits() const;
 
-  SpareBitVector getWeakReferenceSpareBits() const;
-  Size getWeakReferenceSize() const { return PtrSize; }
-  Alignment getWeakReferenceAlignment() const { return getPointerAlignment(); }
-
-  SpareBitVector getUnownedReferenceSpareBits(ReferenceCounting style) const;
-  unsigned getUnownedExtraInhabitantCount(ReferenceCounting style);
-  APInt getUnownedExtraInhabitantValue(unsigned bits, unsigned index,
-                                       ReferenceCounting style);
-  APInt getUnownedExtraInhabitantMask(ReferenceCounting style);
+  /// Return runtime specific extra inhabitant and spare bits policies.
+  unsigned getReferenceStorageExtraInhabitantCount(ReferenceOwnership ownership,
+                                                 ReferenceCounting style) const;
+  SpareBitVector getReferenceStorageSpareBits(ReferenceOwnership ownership,
+                                              ReferenceCounting style) const;
+  APInt getReferenceStorageExtraInhabitantValue(unsigned bits, unsigned index,
+                                                ReferenceOwnership ownership,
+                                                ReferenceCounting style) const;
+  APInt getReferenceStorageExtraInhabitantMask(ReferenceOwnership ownership,
+                                               ReferenceCounting style) const;
 
   llvm::Type *getFixedBufferTy();
   llvm::Type *getValueWitnessTy(ValueWitness index);
@@ -691,7 +705,13 @@ private:
   
 //--- Types -----------------------------------------------------------------
 public:
-  const ProtocolInfo &getProtocolInfo(ProtocolDecl *D);
+  const ProtocolInfo &getProtocolInfo(ProtocolDecl *D, ProtocolInfoKind kind);
+
+  // Not strictly a type operation, but similar.
+  const ConformanceInfo &
+  getConformanceInfo(const ProtocolDecl *protocol,
+                     const ProtocolConformance *conformance);
+
   SILType getLoweredType(AbstractionPattern orig, Type subst);
   SILType getLoweredType(Type subst);
   const TypeInfo &getTypeInfoForUnlowered(AbstractionPattern orig,
@@ -728,7 +748,7 @@ public:
   clang::CanQual<clang::Type> getClangType(CanType type);
   clang::CanQual<clang::Type> getClangType(SILType type);
   clang::CanQual<clang::Type> getClangType(SILParameterInfo param);
-  
+
   const clang::ASTContext &getClangASTContext() {
     assert(ClangASTContext &&
            "requesting clang AST context without clang importer!");
@@ -741,6 +761,8 @@ public:
   ResilienceExpansion getResilienceExpansionForAccess(NominalTypeDecl *decl);
   ResilienceExpansion getResilienceExpansionForLayout(NominalTypeDecl *decl);
   ResilienceExpansion getResilienceExpansionForLayout(SILGlobalVariable *var);
+
+  Alignment getCappedAlignment(Alignment alignment);
 
   SpareBitVector getSpareBitsForType(llvm::Type *scalarTy, Size size);
 
@@ -762,6 +784,9 @@ private:
 
   llvm::DenseMap<Decl*, MetadataLayout*> MetadataLayouts;
   void destroyMetadataLayoutMap();
+
+  llvm::DenseMap<const ProtocolConformance *,
+                 std::unique_ptr<const ConformanceInfo>> Conformances;
 
   friend class GenericContextScope;
   friend class CompletelyFragileScope;
@@ -977,7 +1002,7 @@ public:
   llvm::Constant *getAddrOfCaptureDescriptor(SILFunction &caller,
                                              CanSILFunctionType origCalleeType,
                                              CanSILFunctionType substCalleeType,
-                                             SubstitutionList subs,
+                                             SubstitutionMap subs,
                                              const HeapLayout &layout);
   llvm::Constant *getAddrOfBoxDescriptor(CanType boxedType);
 
@@ -1024,6 +1049,8 @@ public:
   llvm::Module *releaseModule();
   llvm::AttributeList getAllocAttrs();
 
+  bool isStandardLibrary() const;
+
 private:
   llvm::Constant *EmptyTupleMetadata = nullptr;
   llvm::Constant *AnyExistentialMetadata = nullptr;
@@ -1049,8 +1076,8 @@ private:                            \
 //--- Generic ---------------------------------------------------------------
 public:
   llvm::Constant *getFixLifetimeFn();
-  
-  /// The constructor.
+
+  /// The constructor used when generating code.
   ///
   /// The \p SF is the source file for which the llvm module is generated when
   /// doing multi-threaded whole-module compilation. Otherwise it is null.
@@ -1058,6 +1085,14 @@ public:
               SourceFile *SF, llvm::LLVMContext &LLVMContext,
               StringRef ModuleName, StringRef OutputFilename,
               StringRef MainInputFilenameForDebugInfo);
+
+  /// The constructor used when we just need an IRGenModule for type lowering.
+  IRGenModule(IRGenerator &irgen, std::unique_ptr<llvm::TargetMachine> &&target,
+              llvm::LLVMContext &LLVMContext)
+    : IRGenModule(irgen, std::move(target), /*SF=*/nullptr, LLVMContext,
+                  "<fake module name>", "<fake output filename>",
+                  "<fake main input filename>") {}
+
   ~IRGenModule();
 
   llvm::LLVMContext &getLLVMContext() const { return LLVMContext; }
@@ -1110,7 +1145,16 @@ public:
   llvm::Function *getAddrOfDispatchThunk(SILDeclRef declRef,
                                          ForDefinition_t forDefinition);
 
-  llvm::Function *emitDispatchThunk(SILDeclRef declRef);
+  void emitDispatchThunk(SILDeclRef declRef);
+
+  llvm::GlobalValue *defineAlias(LinkEntity entity,
+                                 llvm::Constant *definition);
+
+  llvm::GlobalValue *defineMethodDescriptor(SILDeclRef declRef,
+                                            NominalTypeDecl *nominalDecl,
+                                            llvm::Constant *definition);
+
+
   Address getAddrOfEnumCase(EnumElementDecl *Case,
                             ForDefinition_t forDefinition);
   Address getAddrOfFieldOffset(VarDecl *D, ForDefinition_t forDefinition);
@@ -1124,11 +1168,10 @@ public:
                                                      bool isForeign,
                                                      ForDefinition_t forDefinition);
   llvm::GlobalValue *defineTypeMetadata(CanType concreteType,
-                                  bool isIndirect,
-                                  bool isPattern,
-                                  bool isConstant,
-                                  ConstantInitFuture init,
-                                  llvm::StringRef section = {});
+                                        bool isPattern,
+                                        bool isConstant,
+                                        ConstantInitFuture init,
+                                        llvm::StringRef section = {});
 
   TypeEntityReference getTypeEntityReference(NominalTypeDecl *D);
 
@@ -1137,7 +1180,6 @@ public:
                                           SymbolReferenceKind kind);
   llvm::Constant *getAddrOfTypeMetadataPattern(NominalTypeDecl *D);
   llvm::Constant *getAddrOfTypeMetadataPattern(NominalTypeDecl *D,
-                                               bool isConstant,
                                                ConstantInit init,
                                                StringRef section);
   llvm::Function *getAddrOfTypeMetadataCompletionFunction(NominalTypeDecl *D,
@@ -1145,6 +1187,9 @@ public:
   llvm::Function *getAddrOfTypeMetadataInstantiationFunction(NominalTypeDecl *D,
                                              ForDefinition_t forDefinition);
   llvm::Constant *getAddrOfTypeMetadataInstantiationCache(NominalTypeDecl *D,
+                                             ForDefinition_t forDefinition);
+  llvm::Constant *getAddrOfTypeMetadataSingletonInitializationCache(
+                                             NominalTypeDecl *D,
                                              ForDefinition_t forDefinition);
   llvm::Function *getAddrOfTypeMetadataAccessFunction(CanType type,
                                                ForDefinition_t forDefinition);
@@ -1155,9 +1200,6 @@ public:
   llvm::Constant *getAddrOfTypeMetadataLazyCacheVariable(CanType type,
                                                ForDefinition_t forDefinition);
   llvm::Constant *getAddrOfForeignTypeMetadataCandidate(CanType concreteType);
-
-  /// Determine whether the given type requires foreign type metadata.
-  bool requiresForeignTypeMetadata(CanType type);
 
   llvm::Constant *getAddrOfClassMetadataBounds(ClassDecl *D,
                                                ForDefinition_t forDefinition);
@@ -1170,13 +1212,18 @@ public:
                                       ConstantInit definition = ConstantInit());
   llvm::Constant *getAddrOfModuleContextDescriptor(ModuleDecl *D,
                                       ConstantInit definition = ConstantInit());
+  llvm::Constant *getAddrOfReflectionFieldDescriptor(CanType type,
+                                      ConstantInit definition = ConstantInit());
+  llvm::Constant *getAddrOfReflectionBuiltinDescriptor(CanType type,
+                                      ConstantInit definition = ConstantInit());
+  llvm::Constant *getAddrOfReflectionAssociatedTypeDescriptor(
+                                      const ProtocolConformance *c,
+                                      ConstantInit definition = ConstantInit());
   llvm::Constant *getAddrOfObjCModuleContextDescriptor();
   llvm::Constant *getAddrOfClangImporterModuleContextDescriptor();
   ConstantReference getAddrOfParentContextDescriptor(DeclContext *from);
   llvm::Constant *getAddrOfProtocolDescriptor(ProtocolDecl *D,
                                       ConstantInit definition = ConstantInit());
-  llvm::Constant *getAddrOfProtocolRequirementArray(ProtocolDecl *D,
-                                                    ConstantInit definition);
   llvm::Constant *getAddrOfProtocolConformanceDescriptor(
                                   const NormalProtocolConformance *conformance,
                                   ConstantInit definition = ConstantInit());
@@ -1237,10 +1284,6 @@ public:
        llvm::Type *defaultType,
        ConstantReference::Directness forceIndirect = ConstantReference::Direct);
 
-  ConstantReference
-  getFunctionGOTEquivalent(LinkEntity entity,
-                           llvm::Function *func);
-
   llvm::Constant *
   emitRelativeReference(ConstantReference target,
                         llvm::Constant *base,
@@ -1291,8 +1334,8 @@ private:
   void emitLazyPrivateDefinitions();
   void addRuntimeResolvableType(NominalTypeDecl *nominal);
 
-  /// Add all conformances of \p Nominal to LazyWitnessTables.
-  void addLazyConformances(NominalTypeDecl *Nominal);
+  /// Add all conformances of the given \c DeclContext LazyWitnessTables.
+  void addLazyConformances(DeclContext *dc);
 
 //--- Global context emission --------------------------------------------------
 public:

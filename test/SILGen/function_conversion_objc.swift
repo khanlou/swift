@@ -1,9 +1,6 @@
-
-// RUN: %target-swift-frontend -module-name function_conversion_objc -sdk %S/Inputs %s -I %S/Inputs -enable-sil-ownership -enable-source-import -emit-silgen -verify | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name function_conversion_objc -sdk %S/Inputs %s -I %S/Inputs -enable-sil-ownership -enable-source-import -enable-objc-interop -verify | %FileCheck %s
 
 import Foundation
-
-// REQUIRES: objc_interop
 
 // ==== Metatype to object conversions
 
@@ -66,7 +63,7 @@ func funcToBlock(_ x: @escaping () -> ()) -> @convention(block) () -> () {
 // CHECK:   [[COPIED_2:%.*]] = copy_value [[BORROWED_COPIED]]
 // CHECK:   [[THUNK:%.*]] = function_ref @$SIeyB_Ieg_TR
 // CHECK:   [[FUNC:%.*]] = partial_apply [callee_guaranteed] [[THUNK]]([[COPIED_2]])
-// CHECK:   end_borrow [[BORROWED_COPIED]] from [[COPIED]]
+// CHECK:   end_borrow [[BORROWED_COPIED]]
 // CHECK:   destroy_value [[COPIED]]
 // CHECK-NOT:   destroy_value [[ARG]]
 // CHECK:   return [[FUNC]]

@@ -30,7 +30,7 @@ func _stdlib_binary_CFStringCreateCopy(
 }
 
 @inlinable // FIXME(sil-serialize-all)
-@effects(readonly)
+@_effects(readonly)
 public // @testable
 func _stdlib_binary_CFStringGetLength(
   _ source: _CocoaString
@@ -136,8 +136,8 @@ internal func _bridgeASCIICocoaString(
   return length == numCharWritten ? count : nil
 }
 
-public // @testable
-func _bridgeToCocoa(_ small: _SmallUTF8String) -> _CocoaString {
+@usableFromInline
+internal func _bridgeToCocoa(_ small: _SmallUTF8String) -> _CocoaString {
   return small.withUTF8CodeUnits { bufPtr in
       return _swift_stdlib_CFStringCreateWithBytes(
           nil, bufPtr.baseAddress._unsafelyUnwrappedUnchecked,
@@ -203,22 +203,6 @@ func _makeCocoaStringGuts(_ cocoaString: _CocoaString) -> _StringGuts {
 
   let length = _StringGuts.getCocoaLength(
     _unsafeBitPattern: Builtin.reinterpretCast(immutableCopy))
-
-  // TODO(SSO): And also for UTF-16 strings and non-contiguous strings
-  if let ptr = start, !isUTF16 && length <= _SmallUTF8String.capacity {
-    if let small = _SmallUTF8String(
-      UnsafeBufferPointer(
-        start: ptr.assumingMemoryBound(to: UInt8.self), count: length)
-    ) {
-      return _StringGuts(small)
-    } else {
-#if arch(i386) || arch(arm)
-#else
-      _sanityCheckFailure("Couldn't fit 15-char ASCII small string?")
-#endif
-    }
-  }
-
   return _StringGuts(
     _largeNonTaggedCocoaObject: immutableCopy,
     count: length,
@@ -331,7 +315,7 @@ public final class _NSContiguousString : _SwiftNativeNSString, _NSStringCore {
   @objc(characterAtIndex:)
   public func character(at index: Int) -> UInt16 {
     defer { _fixLifetime(self) }
-    return _guts[index]
+    return _guts.codeUnit(atCheckedOffset: index)
   }
 
   @inlinable

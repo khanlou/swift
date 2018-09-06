@@ -109,7 +109,7 @@ namespace swift {
       StaticSpellingKind StaticSpellingKindVal;
       DescriptiveDeclKind DescriptiveDeclKindVal;
       const DeclAttribute *DeclAttributeVal;
-      clang::VersionTuple VersionVal;
+      llvm::VersionTuple VersionVal;
       LayoutConstraint LayoutConstraintVal;
     };
     
@@ -181,7 +181,7 @@ namespace swift {
         : Kind(DiagnosticArgumentKind::DeclAttribute),
           DeclAttributeVal(attr) {}
 
-    DiagnosticArgument(clang::VersionTuple version)
+    DiagnosticArgument(llvm::VersionTuple version)
       : Kind(DiagnosticArgumentKind::VersionTuple),
         VersionVal(version) { }
 
@@ -264,7 +264,7 @@ namespace swift {
       return DeclAttributeVal;
     }
 
-    clang::VersionTuple getAsVersionTuple() const {
+    llvm::VersionTuple getAsVersionTuple() const {
       assert(Kind == DiagnosticArgumentKind::VersionTuple);
       return VersionVal;
     }
@@ -619,10 +619,7 @@ namespace swift {
     /// be attached.
     InFlightDiagnostic diagnose(SourceLoc Loc, DiagID ID, 
                                 ArrayRef<DiagnosticArgument> Args) {
-      assert(!ActiveDiagnostic && "Already have an active diagnostic");
-      ActiveDiagnostic = Diagnostic(ID, Args);
-      ActiveDiagnostic->setLoc(Loc);
-      return InFlightDiagnostic(*this);
+      return diagnose(Loc, Diagnostic(ID, Args));
     }
 
     /// \brief Emit a diagnostic using a preformatted array of diagnostic
@@ -640,7 +637,7 @@ namespace swift {
     /// be attached.
     InFlightDiagnostic diagnose(DeclNameLoc Loc, DiagID ID, 
                                 ArrayRef<DiagnosticArgument> Args) {
-      return diagnose(Loc.getBaseNameLoc(), ID, Args);
+      return diagnose(Loc.getBaseNameLoc(), Diagnostic(ID, Args));
     }
 
     /// \brief Emit an already-constructed diagnostic at the given location.
@@ -672,11 +669,14 @@ namespace swift {
     InFlightDiagnostic 
     diagnose(SourceLoc Loc, Diag<ArgTypes...> ID,
              typename detail::PassArgument<ArgTypes>::type... Args) {
-      assert(!ActiveDiagnostic && "Already have an active diagnostic");
-      ActiveDiagnostic = Diagnostic(ID, std::move(Args)...);
-      ActiveDiagnostic->setLoc(Loc);
-      return InFlightDiagnostic(*this);
+      return diagnose(Loc, Diagnostic(ID, std::move(Args)...));
     }
+
+    /// Delete an API that may lead clients to avoid specifying source location.
+    template<typename ...ArgTypes>
+    InFlightDiagnostic
+    diagnose(Diag<ArgTypes...> ID,
+             typename detail::PassArgument<ArgTypes>::type... Args) = delete;
 
     /// \brief Emit a diagnostic with the given set of diagnostic arguments.
     ///
@@ -691,10 +691,7 @@ namespace swift {
     InFlightDiagnostic 
     diagnose(DeclNameLoc Loc, Diag<ArgTypes...> ID,
              typename detail::PassArgument<ArgTypes>::type... Args) {
-      assert(!ActiveDiagnostic && "Already have an active diagnostic");
-      ActiveDiagnostic = Diagnostic(ID, std::move(Args)...);
-      ActiveDiagnostic->setLoc(Loc.getBaseNameLoc());
-      return InFlightDiagnostic(*this);
+      return diagnose(Loc.getBaseNameLoc(), Diagnostic(ID, std::move(Args)...));
     }
 
     /// \brief Emit a diagnostic using a preformatted array of diagnostic
@@ -712,10 +709,7 @@ namespace swift {
     /// be attached.
     InFlightDiagnostic diagnose(const Decl *decl, DiagID id,
                                 ArrayRef<DiagnosticArgument> args) {
-      assert(!ActiveDiagnostic && "Already have an active diagnostic");
-      ActiveDiagnostic = Diagnostic(id, args);
-      ActiveDiagnostic->setDecl(decl);
-      return InFlightDiagnostic(*this);
+      return diagnose(decl, Diagnostic(id, args));
     }
 
     /// \brief Emit an already-constructed diagnostic referencing the given
@@ -748,9 +742,7 @@ namespace swift {
     InFlightDiagnostic
     diagnose(const Decl *decl, Diag<ArgTypes...> id,
              typename detail::PassArgument<ArgTypes>::type... args) {
-      ActiveDiagnostic = Diagnostic(id, std::move(args)...);
-      ActiveDiagnostic->setDecl(decl);
-      return InFlightDiagnostic(*this);
+      return diagnose(decl, Diagnostic(id, std::move(args)...));
     }
 
     /// \returns true if diagnostic is marked with PointsToFirstBadToken
@@ -760,7 +752,7 @@ namespace swift {
     /// \returns true if any diagnostic consumer gave an error while invoking
     //// \c finishProcessing.
     bool finishProcessing();
-    
+
     /// \brief Format the given diagnostic text and place the result in the given
     /// buffer.
     static void formatDiagnosticText(
@@ -781,6 +773,9 @@ namespace swift {
     /// \brief Send all tentative diagnostics to all diagnostic consumers and
     /// delete them.
     void emitTentativeDiagnostics();
+
+  public:
+    static const char *diagnosticStringFor(const DiagID id);
   };
 
   /// \brief Represents a diagnostic transaction. While a transaction is

@@ -8,7 +8,9 @@ add_swift_library(swiftSIL STATIC
   InstructionUtils.cpp
   MemAccessUtils.cpp
   Linker.cpp
+  LinearLifetimeChecker.cpp
   LoopInfo.cpp
+  Notifications.cpp
   OptimizationRemark.cpp
   PrettyStackTrace.cpp
   Projection.cpp
@@ -27,6 +29,7 @@ add_swift_library(swiftSIL STATIC
   SILInstructions.cpp
   SILLocation.cpp
   SILModule.cpp
+  SILFunctionBuilder.cpp
   SILOpenedArchetypesTracker.cpp
   SILPrinter.cpp
   SILProfiler.cpp

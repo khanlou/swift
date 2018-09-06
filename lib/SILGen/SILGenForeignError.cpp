@@ -74,8 +74,7 @@ static void emitStoreToForeignErrorSlot(SILGenFunction &SGF,
 
   // Okay, break down the components of SomePointer<SomeError?>.
   // TODO: this should really be an unlowered AST type?
-  CanType bridgedErrorPtrType =
-    foreignErrorSlot->getType().getSwiftRValueType();
+  auto bridgedErrorPtrType = foreignErrorSlot->getType().getASTType();
 
   PointerTypeKind ptrKind;
   CanType bridgedErrorProto =
@@ -101,7 +100,7 @@ static void emitStoreToForeignErrorSlot(SILGenFunction &SGF,
     SGF.emitPropertyLValue(loc, ManagedValue::forUnmanaged(foreignErrorSlot),
                            bridgedErrorPtrType, pointeeProperty,
                            LValueOptions(),
-                           AccessKind::Write,
+                           SGFAccessKind::Write,
                            AccessSemantics::Ordinary);
   RValue rvalue(SGF, loc, bridgedErrorProto,
                 SGF.emitManagedRValueWithCleanup(bridgedError));
@@ -132,7 +131,7 @@ namespace {
 
     SILValue emitBridged(SILGenFunction &SGF, SILLocation loc,
                          CanType bridgedErrorProto) const override {
-      auto nativeErrorType = NativeError->getType().getSwiftRValueType();
+      auto nativeErrorType = NativeError->getType().getASTType();
       assert(nativeErrorType == SGF.SGM.getASTContext().getExceptionType());
 
       SILValue bridgedError = SGF.emitNativeToBridgedError(loc,
@@ -314,7 +313,7 @@ emitResultIsZeroErrorCheck(SILGenFunction &SGF, SILLocation loc,
 
   SILValue resultValue =
     emitUnwrapIntegerResult(SGF, loc, result.getUnmanagedValue());
-  CanType resultType = resultValue->getType().getSwiftRValueType();
+  auto resultType = resultValue->getType().getASTType();
 
   if (!resultType->isBuiltinIntegerType(1)) {
     SILValue zero =

@@ -22,6 +22,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 namespace swift {
+class DiagnosticEngine;
+
 namespace ide {
 namespace api {
 
@@ -31,7 +33,7 @@ enum class SDKNodeKind: uint8_t {
 #include "DigesterEnums.def"
 };
 
-SDKNodeKind parseSDKNodeKind(StringRef Content);
+Optional<SDKNodeKind> parseSDKNodeKind(StringRef Content);
 
 enum class NodeAnnotation: uint8_t{
 #define NODE_ANNOTATION(NAME) NAME,
@@ -57,6 +59,11 @@ raw_ostream &operator<<(raw_ostream &Out, const NodeAnnotation Value);
 
 // Redefine << so that we can output the name of the node kind.
 raw_ostream &operator<<(raw_ostream &Out, const SDKNodeKind Value);
+
+StringRef getDeclKindStr(const DeclKind Value);
+
+// Redefine << so that we can output the name of decl kind.
+raw_ostream &operator<<(raw_ostream &Out, const DeclKind Value);
 
 struct APIDiffItem {
   virtual void streamDef(llvm::raw_ostream &S) const = 0;
@@ -146,6 +153,15 @@ public:
   StringRef getNewName() const { assert(isRename()); return RightComment; }
   APIDiffItemKind getKind() const override {
     return APIDiffItemKind::ADK_CommonDiffItem;
+  }
+
+  bool rightCommentUnderscored() const {
+    DeclNameViewer Viewer(RightComment);
+    auto HasUnderScore =
+      [](StringRef S) { return S.find('_') != StringRef::npos; };
+    auto Args = Viewer.args();
+    return HasUnderScore(Viewer.base()) ||
+        std::any_of(Args.begin(), Args.end(), HasUnderScore);
   }
 };
 
@@ -238,6 +254,7 @@ enum class TypeMemberDiffItemSubKind {
   HoistSelfOnly,
   HoistSelfAndRemoveParam,
   HoistSelfAndUseProperty,
+  FuncRename,
 };
 
 struct TypeMemberDiffItem: public APIDiffItem {
@@ -248,11 +265,10 @@ struct TypeMemberDiffItem: public APIDiffItem {
   Optional<uint8_t> removedIndex;
   StringRef oldTypeName;
   StringRef oldPrintedName;
-
 private:
   DeclNameViewer OldNameViewer;
   DeclNameViewer NewNameViewer;
-
+  std::string NewTypeDot;
 public:
   TypeMemberDiffItemSubKind Subkind;
 
@@ -264,7 +280,9 @@ public:
     newTypeName(newTypeName), newPrintedName(newPrintedName),
     selfIndex(selfIndex), removedIndex(removedIndex), oldTypeName(oldTypeName),
     oldPrintedName(oldPrintedName), OldNameViewer(oldPrintedName),
-    NewNameViewer(newPrintedName), Subkind(getSubKind()) {}
+    NewNameViewer(newPrintedName),
+    NewTypeDot(isNewNameGlobal() ? "" : (llvm::Twine(newTypeName) + ".").str()),
+    Subkind(getSubKind()) {}
   static StringRef head();
   static void describe(llvm::raw_ostream &os);
   static void undef(llvm::raw_ostream &os);
@@ -274,9 +292,11 @@ public:
   StringRef getKey() const override { return usr; }
   const DeclNameViewer &getOldName() const { return OldNameViewer; }
   const DeclNameViewer &getNewName() const { return NewNameViewer; }
+  StringRef getNewTypeAndDot() const { return NewTypeDot; }
   APIDiffItemKind getKind() const override {
     return APIDiffItemKind::ADK_TypeMemberDiffItem;
   }
+  bool isNewNameGlobal() const { return newTypeName.empty(); }
 private:
   TypeMemberDiffItemSubKind getSubKind() const;
 };
@@ -360,7 +380,7 @@ struct APIDiffItemStore {
   static void serialize(llvm::raw_ostream &os, ArrayRef<APIDiffItem*> Items);
   static void serialize(llvm::raw_ostream &os, ArrayRef<NameCorrectionInfo> Items);
   APIDiffItemStore(const APIDiffItemStore& that) = delete;
-  APIDiffItemStore();
+  APIDiffItemStore(DiagnosticEngine &Diags);
   ~APIDiffItemStore();
   ArrayRef<APIDiffItem*> getDiffItems(StringRef Key) const;
   ArrayRef<APIDiffItem*> getAllDiffItems() const;

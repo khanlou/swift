@@ -1,9 +1,6 @@
 
-// RUN: %target-swift-frontend -module-name default_arguments -Xllvm -sil-full-demangle -enable-sil-ownership -emit-silgen -swift-version 3 %s | %FileCheck %s
-// RUN: %target-swift-frontend -module-name default_arguments -Xllvm -sil-full-demangle -enable-sil-ownership -emit-silgen -swift-version 3 %s | %FileCheck %s --check-prefix=NEGATIVE
-
-// RUN: %target-swift-frontend -module-name default_arguments -Xllvm -sil-full-demangle -enable-sil-ownership -emit-silgen -swift-version 4 %s | %FileCheck %s
-// RUN: %target-swift-frontend -module-name default_arguments -Xllvm -sil-full-demangle -enable-sil-ownership -emit-silgen -swift-version 4 %s | %FileCheck %s --check-prefix=NEGATIVE
+// RUN: %target-swift-emit-silgen -module-name default_arguments -Xllvm -sil-full-demangle -enable-sil-ownership -swift-version 4 %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name default_arguments -Xllvm -sil-full-demangle -enable-sil-ownership -swift-version 4 %s | %FileCheck %s --check-prefix=NEGATIVE
 
 // __FUNCTION__ used as top-level parameter produces the module name.
 // CHECK-LABEL: sil @main
@@ -134,7 +131,7 @@ class Foo {
   }
 
   // CHECK-LABEL: sil hidden @$S17default_arguments3FooCyS2icig
-  // CHECK:         string_literal utf16 "subscript"
+  // CHECK:         string_literal utf16 "subscript(_:)"
   subscript(x: Int) -> Int {
     testMagicLiterals()
     closure { testMagicLiterals() }
@@ -163,7 +160,7 @@ func testSelectorCall(_ x: Int, withMagicLiterals y: Int) {
 }
 
 // CHECK-LABEL: sil hidden @$S17default_arguments32testSelectorCallWithUnnamedPieceyySi_SitF
-// CHECK:         string_literal utf16 "testSelectorCallWithUnnamedPiece"
+// CHECK:         string_literal utf16 "testSelectorCallWithUnnamedPiece(_:_:)"
 func testSelectorCallWithUnnamedPiece(_ x: Int, _ y: Int) {
   testMagicLiterals()
 }

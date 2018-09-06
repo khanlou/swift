@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name borrow -enable-sil-ownership -parse-stdlib -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name borrow -enable-sil-ownership -parse-stdlib %s | %FileCheck %s
 
 import Swift
 
@@ -23,7 +23,7 @@ func useD(_ d: D) {}
 // CHECK:   [[OFFSET:%.*]] = ref_element_addr [[BORROWED_CLASS]]
 // CHECK:   [[ACCESS:%.*]] = begin_access [read] [dynamic] [[OFFSET]] : $*D
 // CHECK:   [[LOADED_VALUE:%.*]] = load [copy] [[ACCESS]]
-// CHECK:   end_borrow [[BORROWED_CLASS]] from [[CLASS]]
+// CHECK:   end_borrow [[BORROWED_CLASS]]
 // CHECK:   destroy_value [[CLASS]]
 // CHECK:   [[BORROWED_LOADED_VALUE:%.*]] = begin_borrow [[LOADED_VALUE]]
 // CHECK:   [[FUNC:%.*]] = function_ref @$S6borrow4useD{{.*}} : $@convention(thin) (@guaranteed D) -> ()

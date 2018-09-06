@@ -91,6 +91,7 @@ include_directories(BEFORE
 )
 
 if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
+  set(SOURCEKIT_DEFAULT_TARGET_SDK "LINUX")
   if(SWIFT_BUILD_SOURCEKIT)
     include(ExternalProject)
     ExternalProject_Add(libdispatch
@@ -99,6 +100,7 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
                         BINARY_DIR
                           "${SWIFT_PATH_TO_LIBDISPATCH_BUILD}"
                         CMAKE_ARGS
+                          -DCMAKE_BUILD_TYPE=${LIBDISPATCH_CMAKE_BUILD_TYPE}
                           -DCMAKE_C_COMPILER=${PATH_TO_CLANG_BUILD}/bin/clang
                           -DCMAKE_CXX_COMPILER=${PATH_TO_CLANG_BUILD}/bin/clang++
                           -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}

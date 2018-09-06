@@ -37,7 +37,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TrailingObjects.h"
-#include "clang/Basic/VersionTuple.h"
+#include "llvm/Support/VersionTuple.h"
 
 namespace swift {
 class ASTPrinter;
@@ -111,19 +111,16 @@ public:
     return getOwnership() != ReferenceOwnership::Strong;
   }
   ReferenceOwnership getOwnership() const {
-    if (has(TAK_sil_weak))
-      return ReferenceOwnership::Weak;
-    if (has(TAK_sil_unowned))
-      return ReferenceOwnership::Unowned;
-    if (has(TAK_sil_unmanaged))
-      return ReferenceOwnership::Unmanaged;
+#define REF_STORAGE(Name, name, ...) \
+    if (has(TAK_sil_##name)) return ReferenceOwnership::Name;
+#include "swift/AST/ReferenceStorage.def"
     return ReferenceOwnership::Strong;
   }
   
   void clearOwnership() {
-    clearAttribute(TAK_sil_weak);
-    clearAttribute(TAK_sil_unowned);
-    clearAttribute(TAK_sil_unmanaged);
+#define REF_STORAGE(Name, name, ...) \
+    clearAttribute(TAK_sil_##name);
+#include "swift/AST/ReferenceStorage.def"
   }
 
   bool hasOpenedID() const { return OpenedID.hasValue(); }
@@ -280,7 +277,27 @@ public:
 #define DECL(Name, _) On##Name = 1ull << unsigned(DeclKindIndex::Name),
 #include "swift/AST/DeclNodes.def"
 
-    // More coarse-grained aggregations for use in Attr.def.
+    // Abstract class aggregations for use in Attr.def.
+    OnValue = 0
+#define DECL(Name, _)
+#define VALUE_DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+
+    OnNominalType = 0
+#define DECL(Name, _)
+#define NOMINAL_TYPE_DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+    OnConcreteNominalType = OnNominalType & ~OnProtocol,
+    OnGenericType = OnNominalType | OnTypeAlias,
+
+    OnAbstractFunction = 0
+#define DECL(Name, _)
+#define ABSTRACT_FUNCTION_DECL(Name, _) |On##Name
+#include "swift/AST/DeclNodes.def"
+    ,
+
     OnOperator = 0
 #define DECL(Name, _)
 #define OPERATOR_DECL(Name, _) |On##Name
@@ -596,16 +613,16 @@ enum class PlatformAgnosticAvailabilityKind {
 class AvailableAttr : public DeclAttribute {
 public:
 #define INIT_VER_TUPLE(X)\
-  X(X.empty() ? Optional<clang::VersionTuple>() : X)
+  X(X.empty() ? Optional<llvm::VersionTuple>() : X)
 
   AvailableAttr(SourceLoc AtLoc, SourceRange Range,
                    PlatformKind Platform,
                    StringRef Message, StringRef Rename,
-                   const clang::VersionTuple &Introduced,
+                   const llvm::VersionTuple &Introduced,
                    SourceRange IntroducedRange,
-                   const clang::VersionTuple &Deprecated,
+                   const llvm::VersionTuple &Deprecated,
                    SourceRange DeprecatedRange,
-                   const clang::VersionTuple &Obsoleted,
+                   const llvm::VersionTuple &Obsoleted,
                    SourceRange ObsoletedRange,
                    PlatformAgnosticAvailabilityKind PlatformAgnostic,
                    bool Implicit)
@@ -632,19 +649,19 @@ public:
   const StringRef Rename;
 
   /// Indicates when the symbol was introduced.
-  const Optional<clang::VersionTuple> Introduced;
+  const Optional<llvm::VersionTuple> Introduced;
 
   /// Indicates where the Introduced version was specified.
   const SourceRange IntroducedRange;
 
   /// Indicates when the symbol was deprecated.
-  const Optional<clang::VersionTuple> Deprecated;
+  const Optional<llvm::VersionTuple> Deprecated;
 
   /// Indicates where the Deprecated version was specified.
   const SourceRange DeprecatedRange;
 
   /// Indicates when the symbol was obsoleted.
-  const Optional<clang::VersionTuple> Obsoleted;
+  const Optional<llvm::VersionTuple> Obsoleted;
 
   /// Indicates where the Obsoleted version was specified.
   const SourceRange ObsoletedRange;
@@ -705,8 +722,8 @@ public:
   createPlatformAgnostic(ASTContext &C, StringRef Message, StringRef Rename = "",
                       PlatformAgnosticAvailabilityKind Reason
                          = PlatformAgnosticAvailabilityKind::Unavailable,
-                         clang::VersionTuple Obsoleted
-                         = clang::VersionTuple());
+                         llvm::VersionTuple Obsoleted
+                         = llvm::VersionTuple());
 
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_Available;
@@ -1365,7 +1382,7 @@ public:
   /// Retrieve the first attribute of the given attribute class.
   template <typename ATTR>
   const ATTR *getAttribute(bool AllowInvalid = false) const {
-    return const_cast<DeclAttributes *>(this)->getAttribute<ATTR>();
+    return const_cast<DeclAttributes *>(this)->getAttribute<ATTR>(AllowInvalid);
   }
 
   template <typename ATTR>

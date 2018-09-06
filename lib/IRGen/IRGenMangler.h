@@ -35,6 +35,36 @@ class IRGenMangler : public Mangle::ASTMangler {
 public:
   IRGenMangler() { }
 
+  std::string mangleDispatchThunk(const FuncDecl *func) {
+    beginMangling();
+    appendEntity(func);
+    appendOperator("Tj");
+    return finalize();
+  }
+
+  std::string mangleConstructorDispatchThunk(const ConstructorDecl *ctor,
+                                             bool isAllocating) {
+    beginMangling();
+    appendConstructorEntity(ctor, isAllocating);
+    appendOperator("Tj");
+    return finalize();
+  }
+
+  std::string mangleMethodDescriptor(const FuncDecl *func) {
+    beginMangling();
+    appendEntity(func);
+    appendOperator("Tq");
+    return finalize();
+  }
+
+  std::string mangleConstructorMethodDescriptor(const ConstructorDecl *ctor,
+                                                bool isAllocating) {
+    beginMangling();
+    appendConstructorEntity(ctor, isAllocating);
+    appendOperator("Tq");
+    return finalize();
+  }
+
   std::string mangleValueWitness(Type type, ValueWitness witness);
 
   std::string mangleValueWitnessTable(Type type) {
@@ -82,6 +112,11 @@ public:
     return mangleNominalTypeSymbol(Decl, "Mi");
   }
 
+  std::string mangleTypeMetadataSingletonInitializationCache(
+                                                  const NominalTypeDecl *Decl) {
+    return mangleNominalTypeSymbol(Decl, "Ml");
+  }
+
   std::string mangleTypeMetadataCompletionFunction(const NominalTypeDecl *Decl){
     return mangleNominalTypeSymbol(Decl, "Mr");
   }
@@ -109,7 +144,7 @@ public:
   
   std::string mangleBareProtocol(const ProtocolDecl *Decl) {
     beginMangling();
-    appendProtocolName(Decl);
+    appendProtocolName(Decl, /*allowStandardSubstitution=*/false);
     appendOperator("P");
     return finalize();
   }
@@ -118,13 +153,6 @@ public:
     beginMangling();
     appendProtocolName(Decl);
     appendOperator("Mp");
-    return finalize();
-  }
-
-  std::string mangleProtocolRequirementArray(const ProtocolDecl *Decl) {
-    beginMangling();
-    appendProtocolName(Decl);
-    appendOperator("WR");
     return finalize();
   }
 
@@ -344,7 +372,7 @@ public:
   
   std::string mangleForProtocolDescriptor(ProtocolType *Proto) {
     beginMangling();
-    appendProtocolName(Proto->getDecl());
+    appendProtocolName(Proto->getDecl(), /*allowStandardSubstitution=*/false);
     appendOperator("P");
     return finalize();
   }

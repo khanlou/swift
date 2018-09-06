@@ -24,7 +24,7 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "clang/Basic/VersionTuple.h"
+#include "llvm/Support/VersionTuple.h"
 #include <string>
 
 namespace swift {
@@ -93,9 +93,9 @@ public:
     return Components.empty();
   }
 
-  /// Convert to a (maximum-4-element) clang::VersionTuple, truncating
+  /// Convert to a (maximum-4-element) llvm::VersionTuple, truncating
   /// away any 5th component that might be in this version.
-  operator clang::VersionTuple() const;
+  operator llvm::VersionTuple() const;
 
   /// Returns the concrete version to use when \e this version is provided as
   /// an argument to -swift-version.
@@ -112,8 +112,17 @@ public:
 
   /// Whether this version is greater than or equal to the given major version
   /// number.
-  bool isVersionAtLeast(unsigned major) const {
-    return !empty() && Components[0] >= major;
+  bool isVersionAtLeast(unsigned major, unsigned minor = 0) const {
+    switch (size()) {
+    case 0:
+      return false;
+    case 1:
+      return ((Components[0] == major && 0 == minor) ||
+              (Components[0] > major));
+    default:
+      return ((Components[0] == major && Components[1] >= minor) ||
+              (Components[0] > major));
+    }
   }
 
   /// Return this Version struct with minor and sub-minor components stripped

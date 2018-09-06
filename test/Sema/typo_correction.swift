@@ -112,6 +112,16 @@ struct Generic<T> {
   }
 }
 
+protocol P { // expected-note {{'P' previously declared here}}
+  typealias a = Generic
+}
+
+protocol P {} // expected-error {{invalid redeclaration of 'P'}}
+
+func hasTypo() {
+  _ = P.a.a // expected-error {{type 'Generic' has no member 'a'}}
+}
+
 // Typo correction with AnyObject.
 func takesAnyObject(_ t: AnyObject) {
   _ = t.rawPointer
@@ -143,4 +153,16 @@ func overloaded(_: Float) {} // expected-note {{'overloaded' declared here}}
 func test_overloaded() {
   overloadd(0)
   // expected-error@-1 {{use of unresolved identifier 'overloadd'; did you mean 'overloaded'?}}{{3-12=overloaded}}
+}
+
+// This is one of the backtraces from rdar://36434823 but got fixed along
+// the way.
+class CircularValidationWithTypo {
+  var cdcdcdcd = ababab { // expected-error {{use of unresolved identifier 'ababab'}}
+    didSet { }
+  }
+
+  var abababab = cdcdcdc { // expected-error {{use of unresolved identifier 'cdcdcdc'}}
+    didSet { }
+  }
 }

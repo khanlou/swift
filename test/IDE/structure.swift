@@ -142,7 +142,7 @@ func test1() {
 // CHECK: <enum>enum <name>SomeEnum</name> {
 // CHECK:   <enum-case>case <enum-elem><name>North</name></enum-elem></enum-case>
 // CHECK:   <enum-case>case <enum-elem><name>South</name></enum-elem>, <enum-elem><name>East</name></enum-elem></enum-case>
-// CHECK:   <enum-case>case <enum-elem><name>QRCode</name>(<param><type>String</type></param>)</enum-elem></enum-case>
+// CHECK:   <enum-case>case <enum-elem><name>QRCode(<param><type>String</type></param>)</name></enum-elem></enum-case>
 // CHECK:   <enum-case>case</enum-case>
 // CHECK: }</enum>
 enum SomeEnum {
@@ -276,9 +276,9 @@ struct Tuples {
   }
 }
 
-completion(a: 1) { (x: Int, y: Int) -> Int in
-  return x + y
+completion(a: 1) { (x: Any, y: Int) -> Int in
+  return x as! Int + y
 }
-// CHECK: <call><name>completion</name>(<arg><name>a</name>: 1</arg>) <arg><closure>{ (<param>x: <type>Int</type></param>, <param>y: <type>Int</type></param>) -> <type>Int</type> in
-// CHECK:    return x + y
+// CHECK: <call><name>completion</name>(<arg><name>a</name>: 1</arg>) <arg><closure>{ (<param>x: <type>Any</type></param>, <param>y: <type>Int</type></param>) -> <type>Int</type> in
+// CHECK:    return x as! Int + y
 // CHECK: }</closure></arg></call>

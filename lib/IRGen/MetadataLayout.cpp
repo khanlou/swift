@@ -313,19 +313,18 @@ ClassMetadataLayout::ClassMetadataLayout(IRGenModule &IGM, ClassDecl *decl)
       super::noteStartOfGenericRequirements(forClass);
     }
 
-    void addGenericWitnessTable(CanType argType, ProtocolConformanceRef conf,
-                                ClassDecl *forClass) {
+    void addGenericWitnessTable(ClassDecl *forClass) {
       if (forClass == Target) {
         Layout.NumImmediateMembers++;
       }
-      super::addGenericWitnessTable(argType, conf, forClass);
+      super::addGenericWitnessTable(forClass);
     }
 
-    void addGenericArgument(CanType argType, ClassDecl *forClass) {
+    void addGenericArgument(ClassDecl *forClass) {
       if (forClass == Target) {
         Layout.NumImmediateMembers++;
       }
-      super::addGenericArgument(argType, forClass);
+      super::addGenericArgument(forClass);
     }
 
     void addMethod(SILDeclRef fn) {
@@ -400,12 +399,9 @@ ClassMetadataLayout::getMethodInfo(IRGenFunction &IGF, SILDeclRef method) const{
   return MethodInfo(offset);
 }
 
-Size ClassMetadataLayout::getStaticMethodOffset(SILDeclRef method) const{
-  auto &stored = getStoredMethodInfo(method);
-
-  assert(stored.TheOffset.isStatic() &&
-         "resilient class metadata layout unsupported!");
-  return stored.TheOffset.getStaticOffset();
+MetadataLayout::StoredOffset
+ClassMetadataLayout::getMethodOffsetInfo(SILDeclRef method) const {
+  return getStoredMethodInfo(method).TheOffset;
 }
 
 Offset
@@ -613,8 +609,9 @@ ForeignClassMetadataLayout::ForeignClassMetadataLayout(IRGenModule &IGM,
             ForeignClassMetadataLayout &layout)
       : super(IGM, decl), Layout(layout) {}
 
-    void noteStartOfSuperClass() {
+    void addSuperclass() {
       Layout.SuperClassOffset = getNextOffset();
+      super::addSuperclass();
     }
 
     void layout() {

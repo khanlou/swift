@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name statements -Xllvm -sil-full-demangle -parse-as-library -emit-silgen -enable-sil-ownership -verify %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name statements -Xllvm -sil-full-demangle -parse-as-library -enable-sil-ownership -verify %s | %FileCheck %s
 
 class MyClass { 
   func foo() { }
@@ -524,7 +524,7 @@ func defer_in_closure_in_generic<T>(_ x: T) {
   // CHECK-LABEL: sil private @$S10statements017defer_in_closure_C8_genericyyxlFyycfU_ : $@convention(thin) <T> () -> ()
   _ = {
     // CHECK-LABEL: sil private @$S10statements017defer_in_closure_C8_genericyyxlFyycfU_6$deferL_yylF : $@convention(thin) <T> () -> ()
-    defer { generic_callee_1(T.self) }
+    defer { generic_callee_1(T.self) } // expected-warning {{'defer' statement before end of scope always executes immediately}}{{5-10=do}}
   }
 }
 
@@ -537,7 +537,7 @@ func defer_mutable(_ x: Int) {
   // CHECK: function_ref @$S10statements13defer_mutableyySiF6$deferL_yyF : $@convention(thin) (@inout_aliasable Int) -> ()
   // CHECK-NOT: [[BOX]]
   // CHECK: destroy_value [[BOX]]
-  defer { _ = x }
+  defer { _ = x } // expected-warning {{'defer' statement before end of scope always executes immediately}}{{3-8=do}}
 }
 
 protocol StaticFooProtocol { static func foo() }
@@ -623,7 +623,7 @@ func testRequireOptional2(_ a : String?) -> String {
   // CHECK:  [[CONT_BB]]:
   // CHECK-NEXT:   [[BORROWED_STR:%.*]] = begin_borrow [[STR]]
   // CHECK-NEXT:   [[RETURN:%.*]] = copy_value [[BORROWED_STR]]
-  // CHECK-NEXT:   end_borrow [[BORROWED_STR]] from [[STR]]
+  // CHECK-NEXT:   end_borrow [[BORROWED_STR]]
   // CHECK-NEXT:   destroy_value [[STR]] : $String
   // CHECK-NEXT:   return [[RETURN]] : $String
 
@@ -669,7 +669,7 @@ func test_as_pattern(_ y : BaseClass) -> DerivedClass {
   // CHECK: [[CONT_BB]]:
   // CHECK-NEXT: [[BORROWED_PTR:%.*]] = begin_borrow [[PTR]]
   // CHECK-NEXT: [[RESULT:%.*]] = copy_value [[BORROWED_PTR]]
-  // CHECK-NEXT: end_borrow [[BORROWED_PTR]] from [[PTR]]
+  // CHECK-NEXT: end_borrow [[BORROWED_PTR]]
   // CHECK-NEXT: destroy_value [[PTR]] : $DerivedClass
   // CHECK-NEXT: return [[RESULT]] : $DerivedClass
   return result
@@ -686,9 +686,8 @@ func let_else_tuple_binding(_ a : (Int, Int)?) -> Int {
   return x
 
   // CHECK: [[SOME_BB]]([[PAYLOAD:%.*]] : @trivial $(Int, Int)):
-  // CHECK-NEXT:   [[PAYLOAD_1:%.*]] = tuple_extract [[PAYLOAD]] : $(Int, Int), 0
+  // CHECK-NEXT:   ([[PAYLOAD_1:%.*]], [[PAYLOAD_2:%.*]]) = destructure_tuple [[PAYLOAD]]
   // CHECK-NEXT:   debug_value [[PAYLOAD_1]] : $Int, let, name "x"
-  // CHECK-NEXT:   [[PAYLOAD_2:%.*]] = tuple_extract [[PAYLOAD]] : $(Int, Int), 1
   // CHECK-NEXT:   debug_value [[PAYLOAD_2]] : $Int, let, name "y"
   // CHECK-NEXT:   br [[CONT_BB:bb[0-9]+]]
   // CHECK: [[CONT_BB]]:

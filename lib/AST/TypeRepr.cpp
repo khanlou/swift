@@ -22,6 +22,7 @@
 #include "swift/AST/Module.h"
 #include "swift/AST/Types.h"
 #include "swift/Basic/Defer.h"
+#include "swift/Basic/Statistic.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -157,11 +158,12 @@ TypeRepr *CloneVisitor::visitCompoundIdentTypeRepr(CompoundIdentTypeRepr *T) {
 }
 
 TypeRepr *CloneVisitor::visitFunctionTypeRepr(FunctionTypeRepr *T) {
-  return new (Ctx) FunctionTypeRepr(/*FIXME: Clone?*/T->getGenericParams(),
-                                    visit(T->getArgsTypeRepr()),
-                                    T->getThrowsLoc(),
-                                    T->getArrowLoc(),
-                                    visit(T->getResultTypeRepr()));
+  return new (Ctx) FunctionTypeRepr(
+                              /*FIXME: Clone?*/T->getGenericParams(),
+                              cast<TupleTypeRepr>(visit(T->getArgsTypeRepr())),
+                              T->getThrowsLoc(),
+                              T->getArrowLoc(),
+                              visit(T->getResultTypeRepr()));
 }
 
 TypeRepr *CloneVisitor::visitArrayTypeRepr(ArrayTypeRepr *T) {
@@ -478,6 +480,10 @@ SILBoxTypeRepr *SILBoxTypeRepr::create(ASTContext &C,
                                   ArgLAngleLoc, GenericArgs, ArgRAngleLoc);
 }
 
+SourceLoc FunctionTypeRepr::getStartLocImpl() const {
+  return ArgsTy->getStartLoc();
+}
+
 SourceLoc SILBoxTypeRepr::getStartLocImpl() const {
   if (GenericParams && GenericParams->getSourceRange().isValid())
     return GenericParams->getSourceRange().Start;
@@ -567,10 +573,10 @@ void SpecifierTypeRepr::printImpl(ASTPrinter &Printer,
     Printer.printKeyword("inout");
     break;
   case TypeReprKind::Shared:
-    Printer.printKeyword("shared");
+    Printer.printKeyword("__shared");
     break;
   case TypeReprKind::Owned:
-    Printer.printKeyword("owned");
+    Printer.printKeyword("__owned");
     break;
   default:
     llvm_unreachable("unknown specifier type repr");
@@ -589,4 +595,32 @@ void SILBoxTypeRepr::printImpl(ASTPrinter &Printer,
                                const PrintOptions &Opts) const {
   // TODO
   Printer.printKeyword("sil_box");
+}
+
+// See swift/Basic/Statistic.h for declaration: this enables tracing
+// TypeReprs, is defined here to avoid too much layering violation / circular
+// linkage dependency.
+
+struct TypeReprTraceFormatter : public UnifiedStatsReporter::TraceFormatter {
+  void traceName(const void *Entity, raw_ostream &OS) const {
+    if (!Entity)
+      return;
+    const TypeRepr *TR = static_cast<const TypeRepr *>(Entity);
+    TR->print(OS);
+  }
+  void traceLoc(const void *Entity, SourceManager *SM,
+                clang::SourceManager *CSM, raw_ostream &OS) const {
+    if (!Entity)
+      return;
+    const TypeRepr *TR = static_cast<const TypeRepr *>(Entity);
+    TR->getSourceRange().print(OS, *SM, false);
+  }
+};
+
+static TypeReprTraceFormatter TF;
+
+template<>
+const UnifiedStatsReporter::TraceFormatter*
+FrontendStatsTracer::getTraceFormatter<const TypeRepr *>() {
+  return &TF;
 }

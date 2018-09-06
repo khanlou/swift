@@ -1,4 +1,3 @@
-// RUN: %target-typecheck-verify-swift -swift-version 3
 // RUN: %target-typecheck-verify-swift -swift-version 4
 
 func myMap<T1, T2>(_ array: [T1], _ fn: (T1) -> T2) -> [T2] {}
@@ -282,8 +281,24 @@ struct S<T> {
 
   func subscribe<Object: AnyObject>(object: Object?, method: (Object, T) -> ()) where Object: Hashable {
     let wrappedMethod = { (object: AnyObject, value: T) in }
-    // expected-error @+1 {{value of optional type 'Object?' not unwrapped; did you mean to use '!' or '?'?}}
+    // expected-error @+3 {{value of optional type 'Object?' must be unwrapped to a value of type 'Object'}}
+    // expected-note @+2{{coalesce using '??' to provide a default when the optional value contains 'nil'}}
+    // expected-note @+1{{force-unwrap using '!' to abort execution if the optional value contains 'nil'}}
     cs.forEach { $0.w.append(value: wrappedMethod, forKey: object) }
+  }
+}
+
+// Similar to SR1069 but with multiple generic arguments
+func simplified1069() {
+  class C {}
+  struct S {
+    func genericallyNonOptional<T: AnyObject>(_ a: T, _ b: T, _ c: T) { }
+
+    func f(_ a: C?, _ b: C?, _ c: C) {
+      genericallyNonOptional(a, b, c) // expected-error 2{{value of optional type 'C?' must be unwrapped to a value of type 'C'}}
+      // expected-note @-1 2{{coalesce}}
+      // expected-note @-2 2{{force-unwrap}}
+    }
   }
 }
 
@@ -299,7 +314,7 @@ struct Thing {
   init?() {}
 }
 // This throws a compiler error
-let things = Thing().map { thing in  // expected-error {{unable to infer complex closure return type; add explicit type to disambiguate}} {{34-34=-> (Thing) }}
+let things = Thing().map { thing in  // expected-error {{unable to infer complex closure return type; add explicit type to disambiguate}} {{34-34=-> Thing }}
   // Commenting out this makes it compile
   _ = thing
   return thing
@@ -552,7 +567,7 @@ extension A_SR_5030 {
   func foo() -> B_SR_5030<Int> {
     let tt : B_SR_5030<Int> = sr5030_exFalso()
     return tt.map { x in (idx: x) }
-    // expected-error@-1 {{cannot convert value of type '(idx: (Int))' to closure result type 'Int'}}
+    // expected-error@-1 {{cannot convert value of type '(idx: Int)' to closure result type 'Int'}}
   }
 }
 
@@ -690,3 +705,31 @@ func rdar37790062() {
   _ = S({ bzz(C1()) }, { bar() }) // expected-warning {{result of call to 'bzz' is unused}}
   _ = S({ faz(C2()) }, { bar() }) // expected-warning {{result of call to 'faz' is unused}}
 }
+
+// <rdar://problem/39489003>
+typealias KeyedItem<K, T> = (key: K, value: T)
+
+protocol Node {
+  associatedtype T
+  associatedtype E
+  associatedtype K
+  var item: E {get set}
+  var children: [(key: K, value: T)] {get set}
+}
+
+extension Node {
+  func getChild(for key:K)->(key: K, value: T) {
+    return children.first(where: { (item:KeyedItem) -> Bool in
+        return item.key == key
+        // expected-error@-1 {{binary operator '==' cannot be applied to operands of type '_' and 'Self.K'}}
+        // expected-note@-2 {{overloads for '==' exist with these partially matching parameter lists:}}
+      })!
+  }
+}
+
+// Make sure we don't allow this anymore
+func takesTwo(_: (Int, Int) -> ()) {}
+func takesTwoInOut(_: (Int, inout Int) -> ()) {}
+
+takesTwo { _ in } // expected-error {{contextual closure type '(Int, Int) -> ()' expects 2 arguments, but 1 was used in closure body}}
+takesTwoInOut { _ in } // expected-error {{contextual closure type '(Int, inout Int) -> ()' expects 2 arguments, but 1 was used in closure body}}

@@ -207,8 +207,6 @@ static void adjustPrintOptions(PrintOptions &AdjustedOptions) {
   // Print var declarations separately, one variable per decl.
   AdjustedOptions.ExplodePatternBindingDecls = true;
   AdjustedOptions.VarInitializers = false;
-
-  AdjustedOptions.PrintDefaultParameterPlaceholder = true;
 }
 
 ArrayRef<StringRef>
@@ -497,7 +495,7 @@ void swift::ide::printSubmoduleInterface(
   // If the group name is specified, we sort them according to their source order,
   // which is the order preserved by getTopLevelDecls.
   if (GroupNames.empty()) {
-    std::sort(SwiftDecls.begin(), SwiftDecls.end(),
+    std::stable_sort(SwiftDecls.begin(), SwiftDecls.end(),
       [&](Decl *LHS, Decl *RHS) -> bool {
         auto *LHSValue = dyn_cast<ValueDecl>(LHS);
         auto *RHSValue = dyn_cast<ValueDecl>(RHS);
@@ -533,7 +531,7 @@ void swift::ide::printSubmoduleInterface(
       // Swift extensions are printed with their associated type unless it's
       // a cross-module extension.
       if (!extensionHasClangNode(Ext)) {
-        auto ExtendedNominal = Ext->getExtendedType()->getAnyNominal();
+        auto ExtendedNominal = Ext->getExtendedNominal();
         if (Ext->getModuleContext() == ExtendedNominal->getModuleContext())
           return false;
       }
@@ -622,10 +620,11 @@ void swift::ide::printSubmoduleInterface(
                              // For sub-decls, all extensions should be printed.
                   SynthesizedExtensionAnalyzer::MergeGroupKind::All,
               [&](ArrayRef<ExtensionInfo> Decls) {
+                // Whether we've started the extension merge group in printing.
+                bool Opened = false;
                 for (auto ET : Decls) {
-                  AdjustedOptions.BracketOptions = {
-                      ET.Ext, Decls.front().Ext == ET.Ext,
-                      Decls.back().Ext == ET.Ext, true};
+                  AdjustedOptions.BracketOptions = { ET.Ext, !Opened,
+                    Decls.back().Ext == ET.Ext, true};
                   if (AdjustedOptions.BracketOptions.shouldOpenExtension(
                           ET.Ext))
                     Printer << "\n";
@@ -636,7 +635,8 @@ void swift::ide::printSubmoduleInterface(
                     else
                       AdjustedOptions.initForSynthesizedExtension(NTD);
                   }
-                  ET.Ext->print(Printer, AdjustedOptions);
+                  // Set opened if we actually printed this extension.
+                  Opened |= ET.Ext->print(Printer, AdjustedOptions);
                   if (ET.IsSynthesized)
                     AdjustedOptions.clearSynthesizedExtension();
                   if (AdjustedOptions.BracketOptions.shouldCloseExtension(

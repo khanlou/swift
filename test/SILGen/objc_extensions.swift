@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name objc_extensions -enable-sil-ownership -emit-silgen -sdk %S/Inputs/ -I %S/Inputs -enable-source-import %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name objc_extensions -enable-sil-ownership -sdk %S/Inputs/ -I %S/Inputs -enable-source-import %s | %FileCheck %s
 
 // REQUIRES: objc_interop
 
@@ -9,7 +9,7 @@ import objc_extensions_helper
 class Sub : Base {}
 
 extension Sub {
-  override var prop: String! {
+  @objc override var prop: String! {
     didSet {
       // Ignore it.
     }
@@ -22,7 +22,7 @@ extension Sub {
     // CHECK: [[BORROWED_SELF_COPY:%.*]] = begin_borrow [[SELF_COPY]]
     // CHECK: [[GETTER_FUNC:%.*]] = function_ref @$S15objc_extensions3SubC4propSSSgvg : $@convention(method) (@guaranteed Sub) -> @owned Optional<String>
     // CHECK: apply [[GETTER_FUNC]]([[BORROWED_SELF_COPY]])
-    // CHECK: end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+    // CHECK: end_borrow [[BORROWED_SELF_COPY]]
     // CHECK: destroy_value [[SELF_COPY]]
     // CHECK: } // end sil function '$S15objc_extensions3SubC4propSSSgvgTo'
 
@@ -53,7 +53,7 @@ extension Sub {
     // CHECK:   [[BORROWED_SELF_COPY:%.*]] = begin_borrow [[SELF_COPY]]
     // CHECK:   [[NORMAL_FUNC:%.*]] = function_ref @$S15objc_extensions3SubC4propSSSgvs : $@convention(method) (@owned Optional<String>, @guaranteed Sub) -> ()
     // CHECK:   apply [[NORMAL_FUNC]]([[BRIDGED_NEW_VALUE]], [[BORROWED_SELF_COPY]])
-    // CHECK:   end_borrow [[BORROWED_SELF_COPY]] from [[SELF_COPY]]
+    // CHECK:   end_borrow [[BORROWED_SELF_COPY]]
     // CHECK:   destroy_value [[SELF_COPY]]
     // CHECK: } // end sil function '$S15objc_extensions3SubC4propSSSgvsTo'
 
@@ -68,7 +68,7 @@ extension Sub {
     // CHECK:   [[BORROWED_UPCAST_SELF_COPY:%.*]] = begin_borrow [[UPCAST_SELF_COPY]]
     // CHECK:   [[CAST_BACK:%.*]] = unchecked_ref_cast [[BORROWED_UPCAST_SELF_COPY]] : $Base to $Sub
     // CHECK:   [[GET_SUPER_METHOD:%.*]] = objc_super_method [[CAST_BACK]] : $Sub, #Base.prop!getter.1.foreign : (Base) -> () -> String?, $@convention(objc_method) (Base) -> @autoreleased Optional<NSString>
-    // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY]] from [[UPCAST_SELF_COPY]]
+    // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY]]
     // CHECK:   [[OLD_NSSTRING:%.*]] = apply [[GET_SUPER_METHOD]]([[UPCAST_SELF_COPY]])
 
     // CHECK: bb3([[OLD_NSSTRING_BRIDGED:%.*]] : @owned $Optional<String>):
@@ -93,17 +93,17 @@ extension Sub {
     // This is an identity cast that should be eliminated by SILGen peepholes.
     // CHECK:    [[DIDSET_NOTIFIER:%.*]] = function_ref @$S15objc_extensions3SubC4propSSSgvW : $@convention(method) (@guaranteed Optional<String>, @guaranteed Sub) -> ()
     // CHECK:    apply [[DIDSET_NOTIFIER]]([[BORROWED_OLD_NSSTRING_BRIDGED]], [[SELF]])
-    // CHECK:    end_borrow [[BORROWED_OLD_NSSTRING_BRIDGED]] from [[OLD_NSSTRING_BRIDGED]]
+    // CHECK:    end_borrow [[BORROWED_OLD_NSSTRING_BRIDGED]]
     // CHECK:    destroy_value [[OLD_NSSTRING_BRIDGED]]
     // CHECK:    destroy_value [[NEW_VALUE]]
     // CHECK: } // end sil function '$S15objc_extensions3SubC4propSSSgvs'
 
   }
 
-  func foo() {
+  @objc func foo() {
   }
 
-  override func objCBaseMethod() {}
+  @objc override func objCBaseMethod() {}
 }
 
 // CHECK-LABEL: sil hidden @$S15objc_extensions20testOverridePropertyyyAA3SubCF
@@ -128,7 +128,7 @@ func testCurry(_ x: Sub) {
 }
 
 extension Sub {
-  var otherProp: String {
+  @objc var otherProp: String {
     get { return "hello" }
     set { }
   }
@@ -142,7 +142,7 @@ class SubSub : Sub {
   // CHECK:   [[BORROWED_UPCAST_SELF_COPY:%.*]] = begin_borrow [[UPCAST_SELF_COPY]]
   // CHECK:   [[DOWNCAST:%.*]] = unchecked_ref_cast [[BORROWED_UPCAST_SELF_COPY]] : $Sub to $SubSub
   // CHECK:   objc_super_method [[DOWNCAST]] : $SubSub, #Sub.objCBaseMethod!1.foreign : (Sub) -> () -> (), $@convention(objc_method) (Sub) -> ()
-  // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY]] from [[UPCAST_SELF_COPY]]
+  // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY]]
   // CHECK: } // end sil function '$S15objc_extensions03SubC0C14objCBaseMethodyyF'
   override func objCBaseMethod() {
     super.objCBaseMethod()
@@ -157,16 +157,16 @@ extension SubSub {
   // CHECK:   [[BORROWED_UPCAST_SELF_COPY_1:%.*]] = begin_borrow [[UPCAST_SELF_COPY_1]]
   // CHECK:   [[DOWNCAST_BORROWED_UPCAST_SELF_COPY_1:%.*]] = unchecked_ref_cast [[BORROWED_UPCAST_SELF_COPY_1]] : $Sub to $SubSub
   // CHECK:   = objc_super_method [[DOWNCAST_BORROWED_UPCAST_SELF_COPY_1]] : $SubSub, #Sub.otherProp!getter.1.foreign
-  // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY_1]] from [[UPCAST_SELF_COPY_1]]
+  // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY_1]]
 
   // CHECK:   [[SELF_COPY_2:%.*]] = copy_value [[SELF]]
   // CHECK:   [[UPCAST_SELF_COPY_2:%.*]] = upcast [[SELF_COPY_2]] : $SubSub to $Sub
   // CHECK:   [[BORROWED_UPCAST_SELF_COPY_2:%.*]] = begin_borrow [[UPCAST_SELF_COPY_2]]
   // CHECK:   [[DOWNCAST_BORROWED_UPCAST_SELF_COPY_2:%.*]] = unchecked_ref_cast [[BORROWED_UPCAST_SELF_COPY_2]] : $Sub to $SubSub
   // CHECK:   = objc_super_method [[DOWNCAST_BORROWED_UPCAST_SELF_COPY_2]] : $SubSub, #Sub.otherProp!setter.1.foreign
-  // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY_2]] from [[UPCAST_SELF_COPY_2]]
+  // CHECK:   end_borrow [[BORROWED_UPCAST_SELF_COPY_2]]
   // CHECK: } // end sil function '$S15objc_extensions03SubC0C9otherPropSSvs'
-  override var otherProp: String {
+  @objc override var otherProp: String {
     didSet {
       // Ignore it.
     }

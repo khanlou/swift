@@ -22,6 +22,7 @@
 
 #include "swift/AST/Decl.h"
 #include "swift/AST/DiagnosticEngine.h"
+#include "swift/AST/GenericSignature.h"
 #include "swift/AST/Identifier.h"
 #include "swift/AST/ProtocolConformanceRef.h"
 #include "swift/AST/Types.h"
@@ -45,7 +46,6 @@ namespace swift {
 class DeclContext;
 class DependentMemberType;
 class GenericParamList;
-class GenericSignature;
 class GenericSignatureBuilder;
 class GenericTypeParamType;
 class LazyResolver;
@@ -278,6 +278,10 @@ public:
     /// Cached nested-type information, which contains the best declaration
     /// for a given name.
     llvm::SmallDenseMap<Identifier, CachedNestedType> nestedTypeNameCache;
+
+    /// Cached access paths.
+    llvm::SmallDenseMap<const ProtocolDecl *, ConformanceAccessPath, 8>
+        conformanceAccessPathCache;
   };
 
   friend class RequirementSource;
@@ -336,6 +340,12 @@ private:
                                    FloatingRequirementSource source,
                                    EquivalenceClass *unresolvedEquivClass,
                                    UnresolvedHandlingKind unresolvedHandling);
+
+  /// Add any conditional requirements from the given conformance.
+  ///
+  /// \returns \c true if an error occurred, \c false if not.
+  bool addConditionalRequirements(ProtocolConformanceRef conformance,
+                                  ModuleDecl *inferForModule, SourceLoc loc);
 
   /// Resolve the conformance of the given type to the given protocol when the
   /// potential archetype is known to be equivalent to a concrete type.
@@ -508,7 +518,7 @@ public:
     Optional<ProtocolConformanceRef>
     operator()(CanType dependentType,
                Type conformingReplacementType,
-               ProtocolType *conformedProtocol) const {
+               ProtocolDecl *conformedProtocol) const {
       return builder->lookupConformance(dependentType,
                                         conformingReplacementType,
                                         conformedProtocol);
@@ -522,7 +532,7 @@ public:
   /// Lookup a protocol conformance in a module-agnostic manner.
   Optional<ProtocolConformanceRef>
   lookupConformance(CanType dependentType, Type conformingReplacementType,
-                    ProtocolType *conformedProtocol);
+                    ProtocolDecl *conformedProtocol);
 
 
   /// Retrieve the lazy resolver, if there is one.
@@ -564,19 +574,8 @@ public:
   ///
   /// \returns true if this requirement makes the set of requirements
   /// inconsistent, in which case a diagnostic will have been issued.
-  ConstraintResult addRequirement(const RequirementRepr *req,
-                                  ModuleDecl *inferForModule);
-
-  /// \brief Add a new requirement.
-  ///
-  /// \param inferForModule Infer additional requirements from the types
-  /// relative to the given module.
-  ///
-  /// \returns true if this requirement makes the set of requirements
-  /// inconsistent, in which case a diagnostic will have been issued.
-  ConstraintResult addRequirement(const RequirementRepr *Req,
+  ConstraintResult addRequirement(const Requirement &req,
                                   FloatingRequirementSource source,
-                                  const SubstitutionMap *subMap,
                                   ModuleDecl *inferForModule);
 
   /// \brief Add an already-checked requirement.
@@ -590,7 +589,9 @@ public:
   /// \returns true if this requirement makes the set of requirements
   /// inconsistent, in which case a diagnostic will have been issued.
   ConstraintResult addRequirement(const Requirement &req,
+                                  const RequirementRepr *reqRepr,
                                   FloatingRequirementSource source,
+                                  const SubstitutionMap *subMap,
                                   ModuleDecl *inferForModule);
 
   /// \brief Add all of a generic signature's parameters and requirements.
@@ -608,7 +609,9 @@ public:
   /// where \c Dictionary requires that its key type be \c Hashable,
   /// the requirement \c K : Hashable is inferred from the parameter type,
   /// because the type \c Dictionary<K,V> cannot be formed without it.
-  void inferRequirements(ModuleDecl &module, TypeLoc type,
+  void inferRequirements(ModuleDecl &module,
+                         Type type,
+                         const TypeRepr *typeRepr,
                          FloatingRequirementSource source);
 
   /// Infer requirements from the given pattern, recursively.
@@ -1733,6 +1736,15 @@ inline bool isErrorResult(GenericSignatureBuilder::ConstraintResult result) {
 
 /// Canonical ordering for dependent types.
 int compareDependentTypes(Type type1, Type type2);
+
+template<typename T>
+Type GenericSignatureBuilder::Constraint<T>::getSubjectDependentType(
+                      TypeArrayView<GenericTypeParamType> genericParams) const {
+  if (auto type = subject.dyn_cast<Type>())
+    return type;
+
+  return subject.get<PotentialArchetype *>()->getDependentType(genericParams);
+}
 
 } // end namespace swift
 

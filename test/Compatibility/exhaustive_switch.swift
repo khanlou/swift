@@ -1,4 +1,3 @@
-// RUN: %target-typecheck-verify-swift -swift-version 3 -enable-resilience
 // RUN: %target-typecheck-verify-swift -swift-version 4 -enable-resilience
 
 func foo(a: Int?, b: Int?) -> Int {
@@ -442,7 +441,7 @@ enum ContainsOverlyLargeEnum {
 }
 
 func quiteBigEnough() -> Bool {
-  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{switch must be exhaustive}}
+  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{the compiler is unable to check that this switch is exhaustive in reasonable time}}
   // expected-note@-1 {{do you want to add a default clause?}}
   case (.case0, .case0): return true
   case (.case1, .case1): return true
@@ -458,7 +457,7 @@ func quiteBigEnough() -> Bool {
   case (.case11, .case11): return true
   }
 
-  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{switch must be exhaustive}}
+  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{the compiler is unable to check that this switch is exhaustive in reasonable time}}
   // expected-note@-1 {{do you want to add a default clause?}}
   case (.case0, _): return true
   case (.case1, _): return true
@@ -473,7 +472,7 @@ func quiteBigEnough() -> Bool {
   case (.case10, _): return true
   }
 
-  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{switch must be exhaustive}}
+  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{the compiler is unable to check that this switch is exhaustive in reasonable time}}
   case (.case0, _): return true
   case (.case1, _): return true
   case (.case2, _): return true
@@ -832,7 +831,6 @@ public enum NonExhaustivePayload {
   case milliseconds(Int)
   case microseconds(Int)
   case nanoseconds(Int)
-  @_downgrade_exhaustivity_check
   case never
 }
 
@@ -931,20 +929,6 @@ public func testNonExhaustive(_ value: NonExhaustive, _ payload: NonExhaustivePa
   @unknown case _: break
   } // no-warning
 
-  // Test interaction with @_downgrade_exhaustivity_check.
-  switch (value, interval) { // no-warning
-  case (_, .seconds): break
-  case (.a, _): break
-  case (.b, _): break
-  }
-
-  switch (value, interval) { // no-warning
-  case (_, .never): break
-  case (.a, _): break
-  case (.b, _): break
-  }
-
-
   // Test payloaded enums.
   switch payload { // expected-error {{switch must be exhaustive}} {{none}} expected-note {{add missing case: '.b(_)'}} {{none}}
   case .a: break
@@ -1009,7 +993,7 @@ public func testNonExhaustive(_ value: NonExhaustive, _ payload: NonExhaustivePa
   }
 }
 
-public func testNonExhaustiveWithinModule(_ value: NonExhaustive, _ payload: NonExhaustivePayload, for interval: TemporalProxy, flag: Bool) {
+public func testNonExhaustiveWithinModule(_ value: NonExhaustive, _ payload: NonExhaustivePayload, flag: Bool) {
   switch value { // expected-error {{switch must be exhaustive}} {{none}} expected-note {{add missing case: '.b'}}
   case .a: break
   }
@@ -1082,19 +1066,6 @@ public func testNonExhaustiveWithinModule(_ value: NonExhaustive, _ payload: Non
   case (_, .a): break
   case (_, .b): break
   @unknown case _: break
-  }
-
-  // Test interaction with @_downgrade_exhaustivity_check.
-  switch (value, interval) { // no-warning
-  case (_, .seconds): break
-  case (.a, _): break
-  case (.b, _): break
-  }
-
-  switch (value, interval) { // no-warning
-  case (_, .never): break
-  case (.a, _): break
-  case (.b, _): break
   }
 
   // Test payloaded enums.
@@ -1183,4 +1154,24 @@ func testUnavailableCases(_ x: UnavailableCase, _ y: UnavailableCaseOSSpecific, 
   case .b: break
   case .notYetIntroduced: break
   } // no-error
+}
+
+// The following test used to behave differently when the uninhabited enum was
+// defined in the same module as the function (as opposed to using Swift.Never).
+enum NoError {}
+extension Result where T == NoError {
+  func testUninhabited() {
+    switch self {
+    case .Error(_):
+      break
+    // No .Ok case possible because of the 'NoError'.
+    }
+
+    switch self {
+    case .Error(_):
+      break
+    case .Ok(_):
+      break // But it's okay to write one.
+    }
+  }
 }

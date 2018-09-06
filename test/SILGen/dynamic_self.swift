@@ -1,7 +1,6 @@
-
-// RUN: %target-swift-frontend -module-name dynamic_self -emit-silgen -enable-sil-ownership %s -disable-objc-attr-requires-foundation-module | %FileCheck %s
-// RUN: %target-swift-frontend -module-name dynamic_self -emit-sil -O %s -disable-objc-attr-requires-foundation-module
-// RUN: %target-swift-frontend -module-name dynamic_self -emit-ir %s -disable-objc-attr-requires-foundation-module
+// RUN: %target-swift-emit-silgen -module-name dynamic_self -enable-sil-ownership %s -disable-objc-attr-requires-foundation-module -enable-objc-interop | %FileCheck %s
+// RUN: %target-swift-emit-sil -module-name dynamic_self -O %s -disable-objc-attr-requires-foundation-module -enable-objc-interop
+// RUN: %target-swift-emit-ir -module-name dynamic_self %s -disable-objc-attr-requires-foundation-module -enable-objc-interop
 
 protocol P {
   func f() -> Self
@@ -74,8 +73,8 @@ func testExistentialDispatch(p: P) {
 // CHECK: bb0([[P:%[0-9]+]] : @trivial $*P):
 // CHECK:   [[PCOPY_ADDR:%[0-9]+]] = open_existential_addr immutable_access [[P]] : $*P to $*@opened([[N:".*"]]) P
 // CHECK:   [[P_RESULT:%[0-9]+]] = alloc_stack $P
-// CHECK:   [[P_RESULT_ADDR:%[0-9]+]] = init_existential_addr [[P_RESULT]] : $*P, $@opened([[N]]) P
 // CHECK:   [[P_F_METHOD:%[0-9]+]] = witness_method $@opened([[N]]) P, #P.f!1 : {{.*}}, [[PCOPY_ADDR]]{{.*}} : $@convention(witness_method: P) <τ_0_0 where τ_0_0 : P> (@in_guaranteed τ_0_0) -> @out τ_0_0
+// CHECK:   [[P_RESULT_ADDR:%[0-9]+]] = init_existential_addr [[P_RESULT]] : $*P, $@opened([[N]]) P
 // CHECK:   apply [[P_F_METHOD]]<@opened([[N]]) P>([[P_RESULT_ADDR]], [[PCOPY_ADDR]]) : $@convention(witness_method: P) <τ_0_0 where τ_0_0 : P> (@in_guaranteed τ_0_0) -> @out τ_0_0
 // CHECK:   destroy_addr [[P_RESULT]] : $*P
 // CHECK:   dealloc_stack [[P_RESULT]] : $*P
@@ -111,7 +110,7 @@ func testAnyObjectDispatch(o: AnyObject) {
 
 // <rdar://problem/16270889> Dispatch through ObjC metatypes.
 class ObjCInit {
-  dynamic required init() { }
+  @objc dynamic required init() { }
 }
 
 // CHECK-LABEL: sil hidden @$S12dynamic_self12testObjCInit{{[_0-9a-zA-Z]*}}F : $@convention(thin) (@thick ObjCInit.Type) -> ()

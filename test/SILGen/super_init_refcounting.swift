@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen %s | %FileCheck %s
 
 class Foo {
   init() {}
@@ -8,7 +8,7 @@ class Foo {
 
 class Bar: Foo {
   // CHECK-LABEL: sil hidden @$S22super_init_refcounting3BarC{{[_0-9a-zA-Z]*}}fc
-  // CHECK: bb0([[INPUT_SELF:%.*]] : $Bar):
+  // CHECK: bb0([[INPUT_SELF:%.*]] : @owned $Bar):
   // CHECK:         [[SELF_BOX:%.*]] = alloc_box ${ var Bar }
   // CHECK:         [[MARKED_SELF_BOX:%.*]] =  mark_uninitialized [derivedself] [[SELF_BOX]]
   // CHECK:         [[PB_SELF_BOX:%.*]] = project_box [[MARKED_SELF_BOX]]
@@ -87,7 +87,7 @@ class Good: Foo {
   // CHECK:         [[DOWNCAST_BORROWED_SUPER:%.*]] = unchecked_ref_cast [[BORROWED_SUPER]] : $Foo to $Good
   // CHECK:         [[X_ADDR:%.*]] = ref_element_addr [[DOWNCAST_BORROWED_SUPER]] : $Good, #Good.x
   // CHECK:         [[X:%.*]] = load [trivial] [[X_ADDR]] : $*Int
-  // CHECK:         end_borrow [[BORROWED_SUPER]] from [[SUPER_OBJ]]
+  // CHECK:         end_borrow [[BORROWED_SUPER]]
   // CHECK:         [[SUPER_INIT:%.*]] = function_ref @$S22super_init_refcounting3FooCyACSicfc : $@convention(method) (Int, @owned Foo) -> @owned Foo
   // CHECK:         apply [[SUPER_INIT]]([[X]], [[SUPER_OBJ]])
   override init() {

@@ -1,7 +1,7 @@
 
 // RUN: %empty-directory(%t)
 // RUN: %build-silgen-test-overlays
-// RUN: %target-swift-frontend(mock-sdk: -sdk %S/Inputs -I %t) -module-name objc_currying -enable-sil-ownership -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen(mock-sdk: -sdk %S/Inputs -I %t) -module-name objc_currying -enable-sil-ownership %s | %FileCheck %s
 
 // REQUIRES: objc_interop
 
@@ -66,7 +66,7 @@ func curry_bridged(_ x: CurryTest) -> (String?) -> String? {
 // CHECK:   [[BORROWED_STRING:%.*]] = begin_borrow [[STRING]]
 // CHECK:   [[NSSTRING:%.*]] = apply [[BRIDGING_FUNC]]([[BORROWED_STRING]])
 // CHECK:   [[OPT_NSSTRING:%.*]] = enum $Optional<NSString>, #Optional.some!enumelt.1, [[NSSTRING]] : $NSString
-// CHECK:   end_borrow [[BORROWED_STRING]] from [[STRING]]
+// CHECK:   end_borrow [[BORROWED_STRING]]
 // CHECK:   destroy_value [[STRING]]
 // CHECK:   br bb3([[OPT_NSSTRING]] : $Optional<NSString>)
 

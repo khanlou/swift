@@ -1,4 +1,4 @@
-// RUN: %target-typecheck-verify-swift %s -enable-astscope-lookup
+// RUN: %target-typecheck-verify-swift -enable-astscope-lookup
 
 // Name binding in default arguments
 
@@ -23,9 +23,9 @@ protocol P1 {
 }
 
 // Protocols involving associated types.
-protocol AProtocol {
+protocol AProtocol { // expected-error{{type 'Self.e' constrained to non-protocol, non-class type 'Self.e'}}
   associatedtype e : e
-  // expected-error@-1 {{use of undeclared type 'e'}}
+  // expected-error@-1 {{inheritance from non-protocol, non-class type 'Self.e'}}
 }
 
 // Extensions.

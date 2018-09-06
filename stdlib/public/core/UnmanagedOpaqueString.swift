@@ -93,6 +93,7 @@ extension _UnmanagedOpaqueString : Sequence {
   @usableFromInline
   @_fixed_layout
   struct Iterator : IteratorProtocol {
+    @usableFromInline
     internal typealias Element = UTF16.CodeUnit
 
 #if _runtime(_ObjC) // FIXME unify
@@ -156,6 +157,8 @@ extension _UnmanagedOpaqueString : Sequence {
 extension _UnmanagedOpaqueString : RandomAccessCollection {
   internal typealias IndexDistance = Int
   internal typealias Indices = Range<Index>
+
+  @usableFromInline // FIXME(sil-serialize-all)
   internal typealias SubSequence = _UnmanagedOpaqueString
 
   @_fixed_layout
@@ -220,8 +223,8 @@ extension _UnmanagedOpaqueString : RandomAccessCollection {
 }
 
 extension _UnmanagedOpaqueString : _StringVariant {
-  internal typealias Encoding = Unicode.UTF16
-  internal typealias CodeUnit = Encoding.CodeUnit
+  @usableFromInline internal typealias Encoding = Unicode.UTF16
+  @usableFromInline internal typealias CodeUnit = Encoding.CodeUnit
 
   @inlinable
   var isASCII: Bool {

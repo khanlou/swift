@@ -1,8 +1,8 @@
 
-// RUN: %target-swift-frontend -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle -emit-silgen  -parse-as-library %s | %FileCheck %s
-// RUN: %target-swift-frontend -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle -emit-sil -parse-as-library %s > /dev/null
-// RUN: %target-swift-frontend -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle -emit-sil -O -parse-as-library %s > /dev/null
-// RUN: %target-swift-frontend -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle -emit-ir -parse-as-library %s > /dev/null
+// RUN: %target-swift-emit-silgen -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle  -parse-as-library %s | %FileCheck %s
+// RUN: %target-swift-emit-sil -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle -parse-as-library %s > /dev/null
+// RUN: %target-swift-emit-sil -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle -O -parse-as-library %s > /dev/null
+// RUN: %target-swift-emit-ir -module-name nested_generics -enable-sil-ownership -Xllvm -sil-full-demangle -parse-as-library %s > /dev/null
 
 // TODO:
 // - test generated SIL -- mostly we're just testing mangling here
@@ -232,7 +232,7 @@ class SubclassOfInner<T, U> : OuterRing<T>.InnerRing<U> {
 // CHECK:   [[METHOD:%[0-9]+]] = class_method [[SELF_COPY_VAL]] : $OuterRing<τ_0_0>.InnerRing<τ_1_0>, #OuterRing.InnerRing.method!1 : <T><U><V> (OuterRing<T>.InnerRing<U>) -> (T, U, V) -> (T, U, V), $@convention(method) <τ_0_0><τ_1_0><τ_2_0> (@in_guaranteed τ_0_0, @in_guaranteed τ_1_0, @in_guaranteed τ_2_0, @guaranteed OuterRing<τ_0_0>.InnerRing<τ_1_0>) -> (@out τ_0_0, @out τ_1_0, @out τ_2_0)
 // CHECK:   apply [[METHOD]]<τ_0_0, τ_1_0, τ_2_0>([[T]], [[U]], [[V]], [[TOut]], [[UOut]], [[VOut]], [[SELF_COPY_VAL]]) : $@convention(method) <τ_0_0><τ_1_0><τ_2_0> (@in_guaranteed τ_0_0, @in_guaranteed τ_1_0, @in_guaranteed τ_2_0, @guaranteed OuterRing<τ_0_0>.InnerRing<τ_1_0>) -> (@out τ_0_0, @out τ_1_0, @out τ_2_0)
 // CHECK:   [[RESULT:%[0-9]+]] = tuple ()
-// CHECK:   end_borrow [[SELF_COPY_VAL]] from [[SELF]]
+// CHECK:   end_borrow [[SELF_COPY_VAL]]
 // CHECK:   return [[RESULT]] : $()
 
 // CHECK: sil_witness_table hidden <Spices> Deli<Spices>.Pepperoni: CuredMeat module nested_generics {

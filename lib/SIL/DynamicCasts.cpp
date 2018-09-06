@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2018 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/AST/Module.h"
 #include "swift/AST/Types.h"
 #include "swift/SIL/SILArgument.h"
 #include "swift/SIL/SILBuilder.h"
@@ -70,7 +71,7 @@ static bool canClassOrSuperclassesHaveExtensions(ClassDecl *CD,
     if (!CD->hasSuperclass())
       break;
 
-    CD = CD->getSuperclass()->getClassOrBoundGenericClass();
+    CD = CD->getSuperclassDecl();
   }
 
   return false;
@@ -284,10 +285,10 @@ CanType swift::getNSBridgedClassOfCFClass(ModuleDecl *M, CanType type) {
 
 static bool isCFBridgingConversion(ModuleDecl *M, SILType sourceType,
                                    SILType targetType) {
-  return (sourceType.getSwiftRValueType() ==
-            getNSBridgedClassOfCFClass(M, targetType.getSwiftRValueType()) ||
-          targetType.getSwiftRValueType() ==
-            getNSBridgedClassOfCFClass(M, sourceType.getSwiftRValueType()));
+  return (sourceType.getASTType() ==
+            getNSBridgedClassOfCFClass(M, targetType.getASTType()) ||
+          targetType.getASTType() ==
+            getNSBridgedClassOfCFClass(M, sourceType.getASTType()));
 }
 
 /// Try to classify the dynamic-cast relationship between two types.
@@ -322,10 +323,15 @@ swift::classifyDynamicCast(ModuleDecl *M,
 
   // Casting to a less-optional type can always fail.
   } else if (sourceObject) {
-    return atBest(classifyDynamicCast(M, sourceObject, target,
-                                      /* isSourceTypeExact */ false,
-                                      isWholeModuleOpts),
-                  DynamicCastFeasibility::MaySucceed);
+    auto result = atBest(classifyDynamicCast(M, sourceObject, target,
+                                             /* isSourceTypeExact */ false,
+                                             isWholeModuleOpts),
+                         DynamicCastFeasibility::MaySucceed);
+    if (target.isExistentialType()) {
+      result = atWorst(result, classifyDynamicCastToProtocol(
+                                   M, source, target, isWholeModuleOpts));
+    }
+    return result;
   }
   assert(!sourceObject && !targetObject);
 
@@ -479,22 +485,12 @@ swift::classifyDynamicCast(ModuleDecl *M,
       if (targetFunction->getRepresentation()
             != sourceFunction->getRepresentation())
         return DynamicCastFeasibility::WillFail;
-      
-      if (sourceFunction.getInput() == targetFunction.getInput()
-          && sourceFunction.getResult() == targetFunction.getResult())
+
+      if (AnyFunctionType::equalParams(sourceFunction.getParams(),
+                                       targetFunction.getParams()) &&
+          sourceFunction.getResult() == targetFunction.getResult())
         return DynamicCastFeasibility::WillSucceed;
 
-      auto isSubstitutable = [](CanType a, CanType b) -> bool {
-        // FIXME: Unnecessarily conservative; should structurally check for
-        // substitutability.
-        return a == b || a->hasArchetype() || b->hasArchetype();
-      };
-    
-      if (isSubstitutable(sourceFunction.getInput(), targetFunction.getInput())
-          && isSubstitutable(targetFunction.getInput(),
-                             targetFunction.getResult()))
-        return DynamicCastFeasibility::MaySucceed;
-      
       return DynamicCastFeasibility::WillFail;
     }
   }
@@ -1133,22 +1129,19 @@ bool swift::canUseScalarCheckedCastInstructions(SILModule &M,
     if (!objectType.isAnyClassReferenceType())
       return false;
     
-    if (M.getASTContext().LangOpts.EnableObjCInterop) {
       auto super = archetype->getSuperclass();
       if (super.isNull())
         return false;
 
-      // A base class constraint that isn't NSError rules out the archetype being
-      // bound to NSError.
-        if (auto nserror = M.Types.getNSErrorType())
-          return !super->isEqual(nserror);
-      // If NSError wasn't loaded, any base class constraint must not be NSError.
-      return true;
-    } else {
-      // If ObjC bridging isn't enabled, we can do a scalar cast from any
-      // reference type to any class-constrained archetype.
-      return archetype->requiresClass();
+    // A base class constraint that isn't NSError rules out the archetype being
+    // bound to NSError.
+    if (M.getASTContext().LangOpts.EnableObjCInterop) {
+      if (auto nserror = M.Types.getNSErrorType())
+         return !super->isEqual(nserror);
     }
+    
+    // If NSError wasn't loaded, any base class constraint must not be NSError.
+    return true;
   }
   
   if (M.getASTContext().LangOpts.EnableObjCInterop

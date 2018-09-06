@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -swift-version 5 -module-name properties -Xllvm -sil-full-demangle -parse-as-library -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -swift-version 5 -module-name properties -Xllvm -sil-full-demangle -parse-as-library %s | %FileCheck %s
 
 var zero: Int = 0
 
@@ -15,7 +15,7 @@ struct DidSetWillSetTests: ForceAccessors {
   var a: Int {
     // CHECK-LABEL: sil private @$S10properties010DidSetWillC5TestsV1a{{[_0-9a-zA-Z]*}}vw
     willSet(newA) {
-      // CHECK: bb0(%0 : $Int, %1 : $*DidSetWillSetTests):
+      // CHECK: bb0(%0 : @trivial $Int, %1 : @trivial $*DidSetWillSetTests):
 
       a = zero  // reassign, but don't infinite loop, as accessing on 'self'.
 

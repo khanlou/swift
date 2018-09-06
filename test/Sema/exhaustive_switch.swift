@@ -48,6 +48,19 @@ enum Result<T> {
   }
 }
 
+func overParenthesized() {
+  // SR-7492: Space projection needs to treat extra paren-patterns explicitly.
+  let x: Result<(Result<Int>, String)> = .Ok((.Ok(1), "World"))
+  switch x {
+  case let .Error(e):
+    print(e)
+  case let .Ok((.Error(e), b)):
+    print(e, b)
+  case let .Ok((.Ok(a), b)): // No warning here.
+    print(a, b)
+  }
+}
+
 enum Foo {
   case A(Int)
   case B(Int)
@@ -314,6 +327,7 @@ func switcheroo(a: XX, b: XX) -> Int {
 enum PatternCasts {
   case one(Any)
   case two
+  case three(String)
 }
 
 func checkPatternCasts() {
@@ -323,6 +337,7 @@ func checkPatternCasts() {
   case .one(let s as String): print(s)
   case .one: break
   case .two: break
+  case .three: break
   }
 
   // But should warn here.
@@ -330,6 +345,14 @@ func checkPatternCasts() {
   case .one(_): print(s)
   case .one: break // expected-warning {{case is already handled by previous patterns; consider removing it}}
   case .two: break
+  case .three: break
+  }
+
+  // And not here
+  switch x {
+  case .one: break
+  case .two: break
+  case .three(let s as String?): print(s as Any)
   }
 }
 
@@ -442,7 +465,7 @@ enum ContainsOverlyLargeEnum {
 }
 
 func quiteBigEnough() -> Bool {
-  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{switch must be exhaustive}}
+  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{the compiler is unable to check that this switch is exhaustive in reasonable time}}
   // expected-note@-1 {{do you want to add a default clause?}}
   case (.case0, .case0): return true
   case (.case1, .case1): return true
@@ -458,7 +481,7 @@ func quiteBigEnough() -> Bool {
   case (.case11, .case11): return true
   }
 
-  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{switch must be exhaustive}}
+  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{the compiler is unable to check that this switch is exhaustive in reasonable time}}
   // expected-note@-1 {{do you want to add a default clause?}}
   case (.case0, _): return true
   case (.case1, _): return true
@@ -473,7 +496,7 @@ func quiteBigEnough() -> Bool {
   case (.case10, _): return true
   }
 
-  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{switch must be exhaustive}}
+  switch (OverlyLargeSpaceEnum.case1, OverlyLargeSpaceEnum.case2) { // expected-error {{the compiler is unable to check that this switch is exhaustive in reasonable time}}
   case (.case0, _): return true
   case (.case1, _): return true
   case (.case2, _): return true
@@ -841,7 +864,6 @@ public enum NonExhaustivePayload {
   case milliseconds(Int)
   case microseconds(Int)
   case nanoseconds(Int)
-  @_downgrade_exhaustivity_check
   case never
 }
 
@@ -940,27 +962,6 @@ public func testNonExhaustive(_ value: NonExhaustive, _ payload: NonExhaustivePa
   @unknown case _: break
   } // no-warning
 
-  // Test interaction with @_downgrade_exhaustivity_check.
-  switch (value, interval) { // expected-warning {{switch must be exhaustive}} {{none}}
-  // expected-note@-1 {{add missing case: '(_, .milliseconds(_))'}}
-  // expected-note@-2 {{add missing case: '(_, .microseconds(_))'}}
-  // expected-note@-3 {{add missing case: '(_, .nanoseconds(_))'}}
-  // expected-note@-4 {{add missing case: '(_, .never)'}}
-  case (_, .seconds): break
-  case (.a, _): break
-  case (.b, _): break
-  }
-
-  switch (value, interval) { // expected-warning {{switch must be exhaustive}} {{none}}
-  // expected-note@-1 {{add missing case: '(_, .seconds(_))'}}
-  // expected-note@-2 {{add missing case: '(_, .milliseconds(_))'}}
-  // expected-note@-3 {{add missing case: '(_, .microseconds(_))'}}
-  // expected-note@-4 {{add missing case: '(_, .nanoseconds(_))'}}
-  case (_, .never): break
-  case (.a, _): break
-  case (.b, _): break
-  }
-
   // Test payloaded enums.
   switch payload { // expected-error {{switch must be exhaustive}} {{none}} expected-note {{add missing case: '.b(_)'}} {{none}} expected-note {{handle unknown values using "@unknown default"}} {{none}}
   case .a: break
@@ -1025,7 +1026,7 @@ public func testNonExhaustive(_ value: NonExhaustive, _ payload: NonExhaustivePa
   }
 }
 
-public func testNonExhaustiveWithinModule(_ value: NonExhaustive, _ payload: NonExhaustivePayload, for interval: TemporalProxy, flag: Bool) {
+public func testNonExhaustiveWithinModule(_ value: NonExhaustive, _ payload: NonExhaustivePayload, flag: Bool) {
   switch value { // expected-error {{switch must be exhaustive}} {{none}} expected-note {{add missing case: '.b'}}
   case .a: break
   }
@@ -1098,19 +1099,6 @@ public func testNonExhaustiveWithinModule(_ value: NonExhaustive, _ payload: Non
   case (_, .a): break
   case (_, .b): break
   @unknown case _: break
-  }
-
-  // Test interaction with @_downgrade_exhaustivity_check.
-  switch (value, interval) { // no-warning
-  case (_, .seconds): break
-  case (.a, _): break
-  case (.b, _): break
-  }
-
-  switch (value, interval) { // no-warning
-  case (_, .never): break
-  case (.a, _): break
-  case (.b, _): break
   }
 
   // Test payloaded enums.
@@ -1199,4 +1187,24 @@ func testUnavailableCases(_ x: UnavailableCase, _ y: UnavailableCaseOSSpecific, 
   case .b: break
   case .notYetIntroduced: break
   } // no-error
+}
+
+// The following test used to behave differently when the uninhabited enum was
+// defined in the same module as the function (as opposed to using Swift.Never).
+enum NoError {}
+extension Result where T == NoError {
+  func testUninhabited() {
+    switch self {
+    case .Error(_):
+      break
+    // No .Ok case possible because of the 'NoError'.
+    }
+
+    switch self {
+    case .Error(_):
+      break
+    case .Ok(_):
+      break // But it's okay to write one.
+    }
+  }
 }

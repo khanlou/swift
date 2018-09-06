@@ -19,6 +19,7 @@
 // RUN: else \
 // RUN:   %target-build-swift %t/main.swift %S/Inputs/Mirror/MirrorOther.swift -o %t/Mirror; \
 // RUN: fi
+// RUN: %target-codesign %t/Mirror
 // RUN: %target-run %t/Mirror
 // REQUIRES: executable_test
 
@@ -112,7 +113,7 @@ mirrors.test("BidirectionalStructure") {
   let description = y.testDescription
   expectEqual(
     "[nil: \"a\", nil: \"b\", nil: \"c\", nil: \"",
-    description[description.startIndex..<description.index(of: "d")!])
+    description[description.startIndex..<description.firstIndex(of: "d")!])
 }
 
 mirrors.test("LabeledStructure") {
@@ -478,6 +479,30 @@ mirrors.test("ObjC") {
   // a mirror; make sure we are not automatically exposing ivars of
   // Objective-C classes from the default mirror implementation.
   expectEqual(0, Mirror(reflecting: HasIVars()).children.count)
+}
+
+// rdar://problem/39629937
+@objc class ObjCClass : NSObject {
+  let value: Int
+
+  init(value: Int) { self.value = value }
+
+  override var description: String {
+    return "\(value)"
+  }
+}
+
+struct WrapObjCClassArray {
+  var array: [ObjCClass]
+}
+
+mirrors.test("struct/WrapNSArray") {
+  let nsArray: NSArray = [
+    ObjCClass(value: 1), ObjCClass(value: 2),
+    ObjCClass(value: 3), ObjCClass(value: 4)
+  ]
+  let s = String(describing: WrapObjCClassArray(array: nsArray as! [ObjCClass]))
+  expectEqual("WrapObjCClassArray(array: [1, 2, 3, 4])", s)
 }
 
 #endif // _runtime(_ObjC)
@@ -1667,7 +1692,7 @@ mirrors.test("DictionaryIterator/Mirror") {
   dump(d.makeIterator(), to: &output)
 
   let expected =
-    "- Swift.DictionaryIterator<StdlibUnittest.MinimalHashableValue, StdlibUnittest.OpaqueValue<Swift.Int>>\n"
+    "- Swift.Dictionary<StdlibUnittest.MinimalHashableValue, StdlibUnittest.OpaqueValue<Swift.Int>>.Iterator\n"
 
   expectEqual(expected, output)
 }
@@ -1679,7 +1704,7 @@ mirrors.test("SetIterator/Mirror") {
   dump(s.makeIterator(), to: &output)
 
   let expected =
-    "- Swift.SetIterator<StdlibUnittest.MinimalHashableValue>\n"
+    "- Swift.Set<StdlibUnittest.MinimalHashableValue>.Iterator\n"
 
   expectEqual(expected, output)
 }

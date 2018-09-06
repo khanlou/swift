@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2018 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -13,14 +13,17 @@
 // This file implements the constraint solver used in the type checker.
 //
 //===----------------------------------------------------------------------===//
-#include "ConstraintSystem.h"
 #include "ConstraintGraph.h"
+#include "ConstraintSystem.h"
+#include "TypeCheckType.h"
 #include "swift/AST/ParameterList.h"
 #include "swift/AST/TypeWalker.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/Compiler.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <memory>
 #include <tuple>
 
@@ -92,15 +95,18 @@ Optional<Type> ConstraintSystem::checkTypeOfBinding(TypeVariableType *typeVar,
       *isNilLiteral = false;
 
       // Look for a literal-conformance constraint on the type variable.
-      SmallVector<Constraint *, 8> constraints;
+      llvm::SetVector<Constraint *> constraints;
       getConstraintGraph().gatherConstraints(
           bindingTypeVar, constraints,
-          ConstraintGraph::GatheringKind::EquivalenceClass);
+          ConstraintGraph::GatheringKind::EquivalenceClass,
+          [](Constraint *constraint) -> bool {
+            return constraint->getKind() == ConstraintKind::LiteralConformsTo &&
+                   constraint->getProtocol()->isSpecificProtocol(
+                       KnownProtocolKind::ExpressibleByNilLiteral);
+          });
+
       for (auto constraint : constraints) {
-        if (constraint->getKind() == ConstraintKind::LiteralConformsTo &&
-            constraint->getProtocol()->isSpecificProtocol(
-                KnownProtocolKind::ExpressibleByNilLiteral) &&
-            simplifyType(constraint->getFirstType())->isEqual(bindingTypeVar)) {
+        if (simplifyType(constraint->getFirstType())->isEqual(bindingTypeVar)) {
           *isNilLiteral = true;
           break;
         }
@@ -117,22 +123,27 @@ Optional<Type> ConstraintSystem::checkTypeOfBinding(TypeVariableType *typeVar,
   return type;
 }
 
-Solution ConstraintSystem::finalize(
-           FreeTypeVariableBinding allowFreeTypeVariables) {
+Solution ConstraintSystem::finalize() {
+  assert(solverState);
+
   // Create the solution.
   Solution solution(*this, CurrentScore);
 
   // Update the best score we've seen so far.
-  if (solverState && !retainAllSolutions()) {
-    assert(!solverState->BestScore || CurrentScore <= *solverState->BestScore);
-    solverState->BestScore = CurrentScore;
+  if (!retainAllSolutions()) {
+    assert(TC.getLangOpts().DisableConstraintSolverPerformanceHacks ||
+           !solverState->BestScore || CurrentScore <= *solverState->BestScore);
+
+    if (!solverState->BestScore || CurrentScore <= *solverState->BestScore) {
+      solverState->BestScore = CurrentScore;
+    }
   }
 
   for (auto tv : TypeVariables) {
     if (getFixedType(tv))
       continue;
 
-    switch (allowFreeTypeVariables) {
+    switch (solverState->AllowFreeTypeVariables) {
     case FreeTypeVariableBinding::Disallow:
       llvm_unreachable("Solver left free type variables");
 
@@ -297,46 +308,6 @@ void ConstraintSystem::restoreTypeVariableBindings(unsigned numBindings) {
                       savedBindings.end());
 }
 
-/// \brief Enumerates all of the 'direct' supertypes of the given type.
-///
-/// The direct supertype S of a type T is a supertype of T (e.g., T < S)
-/// such that there is no type U where T < U and U < S.
-static SmallVector<Type, 4> 
-enumerateDirectSupertypes(TypeChecker &tc, Type type) {
-  SmallVector<Type, 4> result;
-
-  if (auto tupleTy = type->getAs<TupleType>()) {
-    // A tuple that can be constructed from a scalar has a value of that
-    // scalar type as its supertype.
-    // FIXME: There is a way more general property here, where we can drop
-    // one label from the tuple, maintaining the rest.
-    int scalarIdx = tupleTy->getElementForScalarInit();
-    if (scalarIdx >= 0) {
-      auto &elt = tupleTy->getElement(scalarIdx);
-      if (elt.isVararg()) // FIXME: Should we keep the name?
-        result.push_back(elt.getVarargBaseTy());
-      else if (elt.hasName())
-        result.push_back(elt.getType());
-    }
-  }
-
-  if (type->mayHaveSuperclass()) {
-    // FIXME: Can also weaken to the set of protocol constraints, but only
-    // if there are any protocols that the type conforms to but the superclass
-    // does not.
-
-    // If there is a superclass, it is a direct supertype.
-    if (auto superclass = tc.getSuperClassOf(type))
-      result.push_back(superclass);
-  }
-
-  if (!type->isMaterializable())
-    result.push_back(type->getWithoutSpecifierType());
-
-  // FIXME: lots of other cases to consider!
-  return result;
-}
-
 bool ConstraintSystem::simplify(bool ContinueAfterFailures) {
   // While we have a constraint in the worklist, process it.
   while (!ActiveConstraints.empty()) {
@@ -416,9 +387,10 @@ void truncate(SmallVectorImpl<T> &vec, unsigned newSize) {
 
 } // end anonymous namespace
 
-ConstraintSystem::SolverState::SolverState(Expr *const expr,
-                                           ConstraintSystem &cs)
-    : CS(cs) {
+ConstraintSystem::SolverState::SolverState(
+    Expr *const expr, ConstraintSystem &cs,
+    FreeTypeVariableBinding allowFreeTypeVariables)
+    : CS(cs), AllowFreeTypeVariables(allowFreeTypeVariables) {
   assert(!CS.solverState &&
          "Constraint system should not already have solver state!");
   CS.solverState = this;
@@ -472,8 +444,6 @@ ConstraintSystem::SolverState::~SolverState() {
 ConstraintSystem::SolverScope::SolverScope(ConstraintSystem &cs)
   : cs(cs), CGScope(cs.CG)
 {
-  ++cs.solverState->depth;
-
   resolvedOverloadSets = cs.resolvedOverloadSets;
   numTypeVariables = cs.TypeVariables.size();
   numSavedBindings = cs.solverState->savedBindings.size();
@@ -488,13 +458,9 @@ ConstraintSystem::SolverScope::SolverScope(ConstraintSystem &cs)
 
   cs.solverState->registerScope(this);
   assert(!cs.failedConstraint && "Unexpected failed constraint!");
-
-  ++cs.solverState->NumStatesExplored;
 }
 
 ConstraintSystem::SolverScope::~SolverScope() {
-  --cs.solverState->depth;
-
   // Erase the end of various lists.
   cs.resolvedOverloadSets = resolvedOverloadSets;
   truncate(cs.TypeVariables, numTypeVariables);
@@ -548,245 +514,75 @@ ConstraintSystem::SolverScope::~SolverScope() {
 /// \brief Try each of the given type variable bindings to find solutions
 /// to the given constraint system.
 ///
-/// \param depth The depth of the solution stack.
 /// \param typeVar The type variable we're binding.
-/// \param bindings The initial set of bindings to explore.
+/// \param initialBindings The initial set of bindings to explore.
 /// \param solutions The set of solutions.
 ///
 /// \returns true if there are no solutions.
 bool ConstraintSystem::tryTypeVariableBindings(
-    unsigned depth, TypeVariableType *typeVar,
-    ArrayRef<ConstraintSystem::PotentialBinding> bindings,
-    SmallVectorImpl<Solution> &solutions,
-    FreeTypeVariableBinding allowFreeTypeVariables) {
+    TypeVariableType *typeVar,
+    ArrayRef<ConstraintSystem::PotentialBinding> initialBindings,
+    SmallVectorImpl<Solution> &solutions) {
+  auto &TC = getTypeChecker();
   bool anySolved = false;
-  llvm::SmallPtrSet<CanType, 4> exploredTypes;
-  llvm::SmallPtrSet<TypeBase *, 4> boundTypes;
+  bool sawFirstLiteralConstraint = false;
 
-  SmallVector<PotentialBinding, 4> storedBindings;
-  auto &tc = getTypeChecker();
+  if (TC.getLangOpts().DebugConstraintSolver) {
+    auto &log = getASTContext().TypeCheckerDebug->getStream();
+    log.indent(solverState->depth * 2) << "Initial bindings: ";
+    interleave(initialBindings.begin(), initialBindings.end(),
+               [&](const ConstraintSystem::PotentialBinding &binding) {
+                 log << typeVar->getString()
+                     << " := " << binding.BindingType->getString();
+               },
+               [&log] { log << ", "; });
+
+    log << '\n';
+  }
+
   ++solverState->NumTypeVariablesBound;
-
-  // If we've already explored a lot of potential solutions, bail.
-  if (getExpressionTooComplex(solutions))
-    return true;
-
-  for (unsigned tryCount = 0; !anySolved && !bindings.empty(); ++tryCount) {
+  TypeVarBindingProducer bindings(*this, typeVar, initialBindings);
+  while (auto binding = bindings()) {
     // Try each of the bindings in turn.
     ++solverState->NumTypeVariableBindings;
-    bool sawFirstLiteralConstraint = false;
 
-    if (tc.getLangOpts().DebugConstraintSolver) {
-      auto &log = getASTContext().TypeCheckerDebug->getStream();
-      log.indent(depth * 2) << "Active bindings: ";
+    if (anySolved) {
+      // If this is a defaultable binding and we have found solutions,
+      // don't explore the default binding.
+      if (binding->isDefaultable())
+        continue;
 
-      for (auto binding : bindings) {
-        log << typeVar->getString() << " := "
-            << binding.BindingType->getString() << " ";
-      }
-
-      log <<"\n";
+      // If we were able to solve this without considering
+      // default literals, don't bother looking at default literals.
+      if (binding->hasDefaultedProtocol() && !sawFirstLiteralConstraint)
+        break;
     }
 
-    for (const auto &binding : bindings) {
-      // If this is a defaultable binding and we have found any solutions,
-      // don't explore the default binding.
-      if (binding.isDefaultableBinding() && anySolved)
-        continue;
+    if (TC.getLangOpts().DebugConstraintSolver) {
+      auto &log = getASTContext().TypeCheckerDebug->getStream();
+      log.indent(solverState->depth * 2) << "(trying ";
+      binding->print(log, &getASTContext().SourceMgr);
+      log << '\n';
+    }
 
-      auto type = binding.BindingType;
+    if (binding->hasDefaultedProtocol())
+      sawFirstLiteralConstraint = true;
 
-      // If the type variable can't bind to an lvalue, make sure the
-      // type we pick isn't an lvalue.
-      if (!typeVar->getImpl().canBindToLValue())
-        type = type->getRValueType();
-
-      // Remove parentheses. They're insignificant here.
-      type = type->getWithoutParens();
-
-      // If we've already tried this binding, move on.
-      if (!boundTypes.insert(type.getPointer()).second)
-        continue;
-
-      // Prevent against checking against the same bound generic type
-      // over and over again. Doing so means redundant work in the best
-      // case. In the worst case, we'll produce lots of duplicate solutions
-      // for this constraint system, which is problematic for overload
-      // resolution.
-      if (type->hasTypeVariable()) {
-        auto triedBinding = false;
-        if (auto BGT = type->getAs<BoundGenericType>()) {
-          for (auto bt : boundTypes) {
-            if (auto BBGT = bt->getAs<BoundGenericType>()) {
-              if (BGT != BBGT &&
-                  BGT->getDecl() == BBGT->getDecl()) {
-                triedBinding = true;
-                break;
-              }
-            }
-          }
-        }
-
-        if (triedBinding)
-          continue;
-      }
-
-      if (tc.getLangOpts().DebugConstraintSolver) {
-        auto &log = getASTContext().TypeCheckerDebug->getStream();
-        log.indent(depth * 2)
-          << "(trying " << typeVar->getString() << " := " << type->getString()
-          << "\n";
-      }
-
+    {
       // Try to solve the system with typeVar := type
       ConstraintSystem::SolverScope scope(*this);
-      if (binding.DefaultedProtocol) {
-        // If we were able to solve this without considering
-        // default literals, don't bother looking at default literals.
-        if (!sawFirstLiteralConstraint) {
-          sawFirstLiteralConstraint = true;
-          if (anySolved)
-            break;
-        }
-        type = openUnboundGenericType(type, typeVar->getImpl().getLocator());
-        type = type->reconstituteSugar(/*recursive=*/false);
-      } else if ((binding.BindingSource == ConstraintKind::ArgumentConversion ||
-                  binding.BindingSource ==
-                      ConstraintKind::ArgumentTupleConversion) &&
-                 !type->hasTypeVariable() && isCollectionType(type)) {
-        // If the type binding comes from the argument conversion, let's
-        // instead of binding collection types directly let's try to
-        // bind using temporary type variables substituted for element
-        // types, that's going to ensure that subtype relationship is
-        // always preserved.
-        auto *BGT = type->castTo<BoundGenericType>();
-        auto UGT = UnboundGenericType::get(BGT->getDecl(), BGT->getParent(),
-                                           BGT->getASTContext());
+      binding->attempt(*this);
+      anySolved |= !solveRec(solutions);
+    }
 
-        type = openUnboundGenericType(UGT, typeVar->getImpl().getLocator());
-        type = type->reconstituteSugar(/*recursive=*/false);
-      }
-
-      // FIXME: We want the locator that indicates where the binding came
-      // from.
-      addConstraint(ConstraintKind::Bind, typeVar, type,
-                    typeVar->getImpl().getLocator());
-
-      // If this was from a defaultable binding note that.
-      if (binding.isDefaultableBinding()) {
-        DefaultedConstraints.push_back(binding.DefaultableBinding);
-      }
-
-      if (!solveRec(solutions, allowFreeTypeVariables))
-        anySolved = true;
-
-      if (tc.getLangOpts().DebugConstraintSolver) {
-        auto &log = getASTContext().TypeCheckerDebug->getStream();
-        log.indent(depth * 2) << ")\n";
-      }
+    if (TC.getLangOpts().DebugConstraintSolver) {
+      auto &log = getASTContext().TypeCheckerDebug->getStream();
+      log.indent(solverState->depth * 2) << ")\n";
     }
 
     // If we found any solution, we're done.
-    if (anySolved)
+    if (anySolved && bindings.needsToComputeNext())
       break;
-
-    // None of the children had solutions, enumerate supertypes and
-    // try again.
-    SmallVector<PotentialBinding, 4> newBindings;
-
-    // Enumerate the supertypes of each of the types we tried.
-    for (auto binding : bindings) {
-      const auto type = binding.BindingType;
-      if (type->hasError())
-        continue;
-
-      // After our first pass, note that we've explored these
-      // types.
-      if (tryCount == 0)
-        exploredTypes.insert(type->getCanonicalType());
-
-      // If we have a protocol with a default type, look for alternative
-      // types to the default.
-      if (tryCount == 0 && binding.DefaultedProtocol) {
-        KnownProtocolKind knownKind =
-            *(binding.DefaultedProtocol->getKnownProtocolKind());
-        for (auto altType : getAlternativeLiteralTypes(knownKind)) {
-          if (exploredTypes.insert(altType->getCanonicalType()).second)
-            newBindings.push_back({altType, AllowedBindingKind::Subtypes,
-                                   binding.BindingSource,
-                                   binding.DefaultedProtocol});
-        }
-      }
-
-      // Handle simple subtype bindings.
-      if (binding.Kind == AllowedBindingKind::Subtypes &&
-          typeVar->getImpl().canBindToLValue() &&
-          !type->hasLValueType() &&
-          !type->is<InOutType>()) {
-        // Try lvalue qualification in addition to rvalue qualification.
-        auto subtype = LValueType::get(type);
-        if (exploredTypes.insert(subtype->getCanonicalType()).second)
-          newBindings.push_back({subtype, binding.Kind, binding.BindingSource});
-      }
-
-      if (binding.Kind == AllowedBindingKind::Subtypes) {
-        if (auto tupleTy = type->getAs<TupleType>()) {
-          int scalarIdx = tupleTy->getElementForScalarInit();
-          if (scalarIdx >= 0) {
-            auto eltType = tupleTy->getElementType(scalarIdx);
-            if (exploredTypes.insert(eltType->getCanonicalType()).second)
-              newBindings.push_back(
-                  {eltType, binding.Kind, binding.BindingSource});
-          }
-        }
-
-        // If we were unsuccessful solving for T?, try solving for T.
-        if (auto objTy = type->getOptionalObjectType()) {
-          if (exploredTypes.insert(objTy->getCanonicalType()).second) {
-            // If T is a type variable, only attempt this if both the
-            // type variable we are trying bindings for, and the type
-            // variable we will attempt to bind, both have the same
-            // polarity with respect to being able to bind lvalues.
-            if (auto otherTypeVar = objTy->getAs<TypeVariableType>()) {
-              if (typeVar->getImpl().canBindToLValue() ==
-                  otherTypeVar->getImpl().canBindToLValue()) {
-                newBindings.push_back(
-                    {objTy, binding.Kind, binding.BindingSource});
-              }
-            } else {
-              newBindings.push_back(
-                  {objTy, binding.Kind, binding.BindingSource});
-            }
-          }
-        }
-      }
-
-      if (binding.Kind != AllowedBindingKind::Supertypes)
-        continue;
-
-      for (auto supertype : enumerateDirectSupertypes(getTypeChecker(), type)) {
-        // If we're not allowed to try this binding, skip it.
-        auto simpleSuper = checkTypeOfBinding(typeVar, supertype);
-        if (!simpleSuper)
-          continue;
-
-        // If we haven't seen this supertype, add it.
-        if (exploredTypes.insert((*simpleSuper)->getCanonicalType()).second)
-          newBindings.push_back({
-              *simpleSuper,
-              binding.Kind,
-              binding.BindingSource,
-          });
-      }
-    }
-
-    // If we didn't compute any new bindings, we're done.
-    if (newBindings.empty())
-      break;
-
-    // We have a new set of bindings; use them for our next loop.
-    storedBindings = std::move(newBindings);
-    bindings = storedBindings;
   }
 
   return !anySolved;
@@ -842,11 +638,6 @@ bool ConstraintSystem::Candidate::solve(
   // Set up expression type checker timer for the candidate.
   cs.Timer.emplace(E, cs);
 
-  // Cleanup after constraint system generation/solving,
-  // because it would assign types to expressions, which
-  // might interfere with solving higher-level expressions.
-  ExprCleaner cleaner(E);
-
   // Generate constraints for the new system.
   if (auto generatedExpr = cs.generateConstraints(E)) {
     E = generatedExpr;
@@ -892,12 +683,12 @@ bool ConstraintSystem::Candidate::solve(
   // Try to solve the system and record all available solutions.
   llvm::SmallVector<Solution, 2> solutions;
   {
-    SolverState state(E, cs);
+    SolverState state(E, cs, FreeTypeVariableBinding::Allow);
 
     // Use solveRec() instead of solve() in here, because solve()
     // would try to deduce the best solution, which we don't
     // really want. Instead, we want the reduced set of domain choices.
-    cs.solveRec(solutions, FreeTypeVariableBinding::Allow);
+    cs.solveRec(solutions);
   }
 
   if (TC.getLangOpts().DebugConstraintSolver) {
@@ -984,6 +775,9 @@ void ConstraintSystem::Candidate::applySolutions(
 }
 
 void ConstraintSystem::shrink(Expr *expr) {
+  if (TC.getLangOpts().SolverDisableShrink)
+    return;
+
   using DomainMap = llvm::SmallDenseMap<Expr *, ArrayRef<ValueDecl *>>;
 
   // A collection of original domains of all of the expressions,
@@ -1003,7 +797,7 @@ void ConstraintSystem::shrink(Expr *expr) {
 
     // Counts the number of overload sets present in the tree so far.
     // Note that the traversal is depth-first.
-    llvm::SmallVector<std::pair<ApplyExpr *, unsigned>, 4> ApplyExprs;
+    llvm::SmallVector<std::pair<Expr *, unsigned>, 4> ApplyExprs;
 
     // A collection of original domains of all of the expressions,
     // so they can be restored in case of failure.
@@ -1030,6 +824,8 @@ void ConstraintSystem::shrink(Expr *expr) {
       }
 
       if (auto coerceExpr = dyn_cast<CoerceExpr>(expr)) {
+        if (coerceExpr->isLiteralInit())
+          ApplyExprs.push_back({coerceExpr, 1});
         visitCoerceExpr(coerceExpr);
         return {false, expr};
       }
@@ -1220,8 +1016,9 @@ void ConstraintSystem::shrink(Expr *expr) {
             // instead of cloning representative.
             auto coercionRepr = typeRepr->clone(CS.getASTContext());
             // Let's try to resolve coercion type from cloned representative.
-            auto coercionType = CS.TC.resolveType(coercionRepr, CS.DC,
-                                                  TypeResolutionOptions());
+            auto resolution = TypeResolution::forContextual(CS.DC);
+            auto coercionType =
+              resolution.resolveType(coercionRepr, None);
 
             // Looks like coercion type is invalid, let's skip this sub-tree.
             if (coercionType->hasError())
@@ -1319,12 +1116,69 @@ void ConstraintSystem::shrink(Expr *expr) {
   }
 }
 
+bool ConstraintSystem::solve(Expr *&expr,
+                             Type convertType,
+                             ExprTypeCheckListener *listener,
+                             SmallVectorImpl<Solution> &solutions,
+                             FreeTypeVariableBinding allowFreeTypeVariables) {
+  // Attempt to solve the constraint system.
+  auto solution = solveImpl(expr,
+                            convertType,
+                            listener,
+                            solutions,
+                            allowFreeTypeVariables);
+
+  // The constraint system has failed
+  if (solution == SolutionKind::Error)
+    return true;
+
+  // If the system is unsolved or there are multiple solutions present but
+  // type checker options do not allow unresolved types, let's try to salvage
+  if (solution == SolutionKind::Unsolved ||
+      (solutions.size() != 1 &&
+       !Options.contains(
+           ConstraintSystemFlags::AllowUnresolvedTypeVariables))) {
+    if (shouldSuppressDiagnostics())
+      return true;
+
+    // Try to provide a decent diagnostic.
+    if (salvage(solutions, expr)) {
+      // If salvage produced an error message, then it failed to salvage the
+      // expression, just bail out having reported the error.
+      return true;
+    }
+
+    // The system was salvaged; continue on as if nothing happened.
+  }
+
+  if (getExpressionTooComplex(solutions)) {
+    TC.diagnose(expr->getLoc(), diag::expression_too_complex).
+    highlight(expr->getSourceRange());
+    return true;
+  }
+
+  if (TC.getLangOpts().DebugConstraintSolver) {
+    auto &log = getASTContext().TypeCheckerDebug->getStream();
+    if (solutions.size() == 1) {
+      log << "---Solution---\n";
+      solutions[0].dump(log);
+    } else {
+      for (unsigned i = 0, e = solutions.size(); i != e; ++i) {
+        log << "--- Solution #" << i << " ---\n";
+        solutions[i].dump(log);
+      }
+    }
+  }
+
+  return false;
+}
+
 ConstraintSystem::SolutionKind
-ConstraintSystem::solve(Expr *&expr,
-                        Type convertType,
-                        ExprTypeCheckListener *listener,
-                        SmallVectorImpl<Solution> &solutions,
-                        FreeTypeVariableBinding allowFreeTypeVariables) {
+ConstraintSystem::solveImpl(Expr *&expr,
+                            Type convertType,
+                            ExprTypeCheckListener *listener,
+                            SmallVectorImpl<Solution> &solutions,
+                            FreeTypeVariableBinding allowFreeTypeVariables) {
   if (TC.getLangOpts().DebugConstraintSolver) {
     auto &log = getASTContext().TypeCheckerDebug->getStream();
     log << "---Constraint solving for the expression at ";
@@ -1361,16 +1215,24 @@ ConstraintSystem::solve(Expr *&expr,
     if (getContextualTypePurpose() == CTP_CallArgument)
       constraintKind = ConstraintKind::ArgumentConversion;
 
+    // In a by-reference yield, we expect the contextual type to be an
+    // l-value type, so the result must be bound to that.
+    if (getContextualTypePurpose() == CTP_YieldByReference)
+      constraintKind = ConstraintKind::Bind;
+
+    auto *convertTypeLocator = getConstraintLocator(
+        getConstraintLocator(expr), ConstraintLocator::ContextualType);
+
     if (allowFreeTypeVariables == FreeTypeVariableBinding::UnresolvedType) {
       convertType = convertType.transform([&](Type type) -> Type {
         if (type->is<UnresolvedType>())
-          return createTypeVariable(getConstraintLocator(expr));
+          return createTypeVariable(convertTypeLocator);
         return type;
       });
     }
 
     addConstraint(constraintKind, getType(expr), convertType,
-                  getConstraintLocator(expr), /*isFavored*/ true);
+                  convertTypeLocator, /*isFavored*/ true);
   }
 
   // Notify the listener that we've built the constraint system.
@@ -1403,31 +1265,30 @@ ConstraintSystem::solve(Expr *&expr,
 
   // If there are no solutions let's mark system as unsolved,
   // and solved otherwise even if there are multiple solutions still present.
-
-  // There was a Swift 3 bug that allowed us to return Solved if we
-  // had found at least one solution before deciding an expression was
-  // "too complex". Maintain that behavior, but for Swift > 3 return
-  // Unsolved in these cases.
-  auto tooComplex = getExpressionTooComplex(solutions);
-  auto unsolved = tooComplex || solutions.empty();
-
-  return unsolved ? SolutionKind::Unsolved : SolutionKind::Solved;
+  return solutions.empty() ? SolutionKind::Unsolved : SolutionKind::Solved;
 }
 
 bool ConstraintSystem::solve(Expr *const expr,
                              SmallVectorImpl<Solution> &solutions,
                              FreeTypeVariableBinding allowFreeTypeVariables) {
   // Set up solver state.
-  SolverState state(expr, *this);
-
-  // Simplify any constraints left active after constraint generation
-  // and optimization. Return if the resulting system has no
-  // solutions.
-  if (failedConstraint || simplify())
-    return true;
+  SolverState state(expr, *this, allowFreeTypeVariables);
 
   // Solve the system.
-  solveRec(solutions, allowFreeTypeVariables);
+  solveRec(solutions);
+
+  if (TC.getLangOpts().DebugConstraintSolver) {
+    auto &log = getASTContext().TypeCheckerDebug->getStream();
+    log << "---Solver statistics---\n";
+    log << "Total number of scopes explored: " << solverState->NumStatesExplored << "\n";
+    log << "Number of leaf scopes explored: " << solverState->leafScopes << "\n";
+    log << "Maximum depth reached while exploring solutions: " << solverState->maxDepth << "\n";
+    if (Timer) {
+      auto timeInMillis =
+        1000 * Timer->getElapsedProcessTimeInFractionalSeconds();
+      log << "Time: " << timeInMillis << "ms\n";
+    }
+  }
 
   // Filter deduced solutions, try to figure out if there is
   // a single best solution to use, if not explicitly disabled
@@ -1435,18 +1296,16 @@ bool ConstraintSystem::solve(Expr *const expr,
   if (!retainAllSolutions())
     filterSolutions(solutions, state.ExprWeights);
 
-  // We fail if there is no solution.
-  return solutions.empty();
+  // We fail if there is no solution or the expression was too complex.
+  return solutions.empty() || getExpressionTooComplex(solutions);
 }
 
-bool ConstraintSystem::solveRec(SmallVectorImpl<Solution> &solutions,
-                                FreeTypeVariableBinding allowFreeTypeVariables){
+bool ConstraintSystem::solveRec(SmallVectorImpl<Solution> &solutions) {
   // If we already failed, or simplification fails, we're done.
-  if (failedConstraint || simplify()) {
+  if (failedConstraint || simplify())
     return true;
-  } else {
-    assert(ActiveConstraints.empty() && "Active constraints remain?");
-  }
+
+  assert(ActiveConstraints.empty() && "Active constraints remain?");
 
   // If there are no constraints remaining, we're done. Save this solution.
   if (InactiveConstraints.empty()) {
@@ -1457,11 +1316,10 @@ bool ConstraintSystem::solveRec(SmallVectorImpl<Solution> &solutions,
 
     // If any free type variables remain and we're not allowed to have them,
     // fail.
-    if (allowFreeTypeVariables == FreeTypeVariableBinding::Disallow &&
-        hasFreeTypeVariables())
+    if (!solverState->allowsFreeTypeVariables() && hasFreeTypeVariables())
       return true;
 
-    auto solution = finalize(allowFreeTypeVariables);
+    auto solution = finalize();
     if (TC.getLangOpts().DebugConstraintSolver) {
       auto &log = getASTContext().TypeCheckerDebug->getStream();
       log.indent(solverState->depth * 2)
@@ -1485,13 +1343,8 @@ bool ConstraintSystem::solveRec(SmallVectorImpl<Solution> &solutions,
 
   // If we don't have more than one component, just solve the whole
   // system.
-  if (numComponents < 2) {
-    SmallVector<Constraint *, 8> disjunctions;
-    collectDisjunctions(disjunctions);
-
-    return solveSimplified(selectDisjunction(disjunctions), solutions,
-                           allowFreeTypeVariables);
-  }
+  if (numComponents < 2)
+    return solveSimplified(solutions);
 
   if (TC.Context.LangOpts.DebugConstraintSolver) {
     auto &log = getASTContext().TypeCheckerDebug->getStream();
@@ -1602,8 +1455,7 @@ bool ConstraintSystem::solveRec(SmallVectorImpl<Solution> &solutions,
     }
 
     // Solve for this component. If it fails, we're done.
-    bool failed = bucket.solve(*this, partialSolutions[component],
-                               allowFreeTypeVariables);
+    bool failed = bucket.solve(*this, partialSolutions[component]);
 
     if (failed) {
       if (TC.getLangOpts().DebugConstraintSolver) {
@@ -1668,7 +1520,7 @@ bool ConstraintSystem::solveRec(SmallVectorImpl<Solution> &solutions,
     // skip it.
     if (!worseThanBestSolution()) {
       // Finalize this solution.
-      auto solution = finalize(allowFreeTypeVariables);
+      auto solution = finalize();
       if (TC.getLangOpts().DebugConstraintSolver) {
         auto &log = getASTContext().TypeCheckerDebug->getStream();
         log.indent(solverState->depth * 2)
@@ -1709,6 +1561,9 @@ bool ConstraintSystem::solveRec(SmallVectorImpl<Solution> &solutions,
 static bool shortCircuitDisjunctionAt(Constraint *constraint,
                                       Constraint *successfulConstraint,
                                       ASTContext &ctx) {
+
+  if (ctx.LangOpts.DisableConstraintSolverPerformanceHacks)
+    return false;
 
   // If the successfully applied constraint is favored, we'll consider that to
   // be the "best".
@@ -1760,15 +1615,16 @@ void ConstraintSystem::collectDisjunctions(
 
 /// \brief Check if the given disjunction choice should be attempted by solver.
 static bool shouldSkipDisjunctionChoice(ConstraintSystem &cs,
-                                        DisjunctionChoice &choice,
+                                        const TypeBinding &choice,
                                         Optional<Score> &bestNonGenericScore) {
-  if (choice->isDisabled()) {
-    auto &TC = cs.TC;
+  auto &TC = cs.TC;
+
+  if (choice.isDisabled()) {
     if (TC.getLangOpts().DebugConstraintSolver) {
       auto &log = cs.getASTContext().TypeCheckerDebug->getStream();
       log.indent(cs.solverState->depth)
       << "(skipping ";
-      choice->print(log, &TC.Context.SourceMgr);
+      choice.print(log, &TC.Context.SourceMgr);
       log << '\n';
     }
 
@@ -1778,6 +1634,9 @@ static bool shouldSkipDisjunctionChoice(ConstraintSystem &cs,
   // Skip unavailable overloads unless solver is in the "diagnostic" mode.
   if (!cs.shouldAttemptFixes() && choice.isUnavailable())
     return true;
+
+  if (TC.getLangOpts().DisableConstraintSolverPerformanceHacks)
+    return false;
 
   // Don't attempt to solve for generic operators if we already have
   // a non-generic solution.
@@ -1802,86 +1661,195 @@ static bool shouldSkipDisjunctionChoice(ConstraintSystem &cs,
   return false;
 }
 
-Constraint *ConstraintSystem::selectDisjunction(
-    SmallVectorImpl<Constraint *> &disjunctions) {
+// Attempt to find a disjunction of bind constraints where all options
+// in the disjunction are binding the same type variable.
+//
+// Prefer disjunctions where the bound type variable is also the
+// right-hand side of a conversion constraint, since having a concrete
+// type that we're converting to can make it possible to split the
+// constraint system into multiple ones.
+static Constraint *selectBestBindingDisjunction(
+    ConstraintSystem &cs, SmallVectorImpl<Constraint *> &disjunctions) {
+
   if (disjunctions.empty())
     return nullptr;
 
-  // Pick the smallest disjunction.
-  // FIXME: This heuristic isn't great, but it helped somewhat for
-  // overload sets.
-  auto disjunction = disjunctions[0];
-  auto bestSize = disjunction->countActiveNestedConstraints();
-  if (bestSize > 2) {
-    for (auto contender : llvm::makeArrayRef(disjunctions).slice(1)) {
-      unsigned newSize = contender->countActiveNestedConstraints();
-      if (newSize < bestSize) {
-        bestSize = newSize;
-        disjunction = contender;
+  auto getAsTypeVar = [&cs](Type type) {
+    return cs.simplifyType(type)->getRValueType()->getAs<TypeVariableType>();
+  };
 
-        if (bestSize == 2)
-          break;
-      }
+  Constraint *firstBindDisjunction = nullptr;
+  for (auto *disjunction : disjunctions) {
+    auto choices = disjunction->getNestedConstraints();
+    assert(!choices.empty());
+
+    auto *choice = choices.front();
+    if (choice->getKind() != ConstraintKind::Bind)
+      continue;
+
+    // We can judge disjunction based on the single choice
+    // because all of choices (of bind overload set) should
+    // have the same left-hand side.
+    // Only do this for simple type variable bindings, not for
+    // bindings like: ($T1) -> $T2 bind String -> Int
+    auto *typeVar = getAsTypeVar(choice->getFirstType());
+    if (!typeVar)
+      continue;
+
+    if (!firstBindDisjunction)
+      firstBindDisjunction = disjunction;
+
+    llvm::SetVector<Constraint *> constraints;
+    cs.getConstraintGraph().gatherConstraints(
+        typeVar, constraints, ConstraintGraph::GatheringKind::EquivalenceClass,
+        [](Constraint *constraint) {
+          return constraint->getKind() == ConstraintKind::Conversion;
+        });
+
+    for (auto *constraint : constraints) {
+      if (typeVar == getAsTypeVar(constraint->getSecondType()))
+        return disjunction;
     }
   }
 
-  // If there are no active constraints in the disjunction, there is
-  // no solution.
-  if (bestSize == 0)
-    return nullptr;
-
-  return disjunction;
+  // If we had any binding disjunctions, return the first of
+  // those. These ensure that we attempt to bind types earlier than
+  // trying the elements of other disjunctions, which can often mean
+  // we fail faster.
+  return firstBindDisjunction;
 }
 
-bool ConstraintSystem::solveSimplified(
-    Constraint *disjunction, SmallVectorImpl<Solution> &solutions,
-    FreeTypeVariableBinding allowFreeTypeVariables) {
+Constraint *ConstraintSystem::selectDisjunction() {
+  SmallVector<Constraint *, 4> disjunctions;
 
-  auto bestBindings = determineBestBindings();
+  collectDisjunctions(disjunctions);
+  if (disjunctions.empty())
+    return nullptr;
 
-  // If we have a binding that does not involve type variables, and is
-  // not fully bound, or we have no disjunction to attempt instead,
-  // go ahead and try the bindings for this type variable.
-  if (bestBindings && (!disjunction || (!bestBindings->InvolvesTypeVariables &&
-                                        !bestBindings->FullyBound))) {
-    return tryTypeVariableBindings(solverState->depth, bestBindings->TypeVar,
-                                   bestBindings->Bindings, solutions,
-                                   allowFreeTypeVariables);
-  }
+  if (auto *disjunction = selectBestBindingDisjunction(*this, disjunctions))
+    return disjunction;
 
-  // If there are no disjunctions we can't solve this system unless we have
-  // free type variables and are allowing them in the solution.
-  if (!disjunction) {
-    if (allowFreeTypeVariables == FreeTypeVariableBinding::Disallow ||
-        !hasFreeTypeVariables())
-      return true;
+  // Pick the disjunction with the smallest number of active choices.
+  auto minDisjunction =
+      std::min_element(disjunctions.begin(), disjunctions.end(),
+                       [&](Constraint *first, Constraint *second) -> bool {
+                         return first->countActiveNestedConstraints() <
+                                second->countActiveNestedConstraints();
+                       });
 
-    // If this solution is worse than the best solution we've seen so far,
-    // skip it.
-    if (worseThanBestSolution())
-      return true;
+  if (minDisjunction != disjunctions.end())
+    return *minDisjunction;
 
-    // If we only have relational or member constraints and are allowing
-    // free type variables, save the solution.
-    for (auto &constraint : InactiveConstraints) {
-      switch (constraint.getClassification()) {
-      case ConstraintClassification::Relational:
-      case ConstraintClassification::Member:
-        continue;
-      default:
-        return true;
+  return nullptr;
+}
+
+Optional<Score> ConstraintSystem::solveForDisjunctionChoice(
+    const TypeBinding &choice, ConstraintLocator *disjunctionLocator,
+    SmallVectorImpl<Solution> &solutions) {
+  SolverScope scope(*this);
+  ++solverState->NumDisjunctionTerms;
+
+  // If the disjunction requested us to, remember which choice we
+  // took for it.
+  if (disjunctionLocator) {
+    auto index = choice.getIndex();
+    DisjunctionChoices.push_back({disjunctionLocator, index});
+
+    // Implicit unwraps of optionals are worse solutions than those
+    // not involving implicit unwraps.
+    if (!disjunctionLocator->getPath().empty()) {
+      auto kind = disjunctionLocator->getPath().back().getKind();
+      if (kind == ConstraintLocator::ImplicitlyUnwrappedDisjunctionChoice ||
+          kind == ConstraintLocator::DynamicLookupResult) {
+        assert(index == 0 || index == 1);
+        if (index == 1)
+          increaseScore(SK_ForceUnchecked);
       }
     }
+  }
 
-    auto solution = finalize(allowFreeTypeVariables);
-    if (TC.getLangOpts().DebugConstraintSolver) {
-      auto &log = getASTContext().TypeCheckerDebug->getStream();
-      log.indent(solverState->depth * 2) << "(found solution)\n";
+  choice.attempt(*this);
+  if (solveRec(solutions))
+    return None;
+
+  assert(!solutions.empty());
+  Score bestScore = solutions.front().getFixedScore();
+  if (solutions.size() == 1)
+    return bestScore;
+
+  for (unsigned i = 1, n = solutions.size(); i != n; ++i) {
+    auto &score = solutions[i].getFixedScore();
+    if (score < bestScore)
+      bestScore = score;
+  }
+
+  return bestScore;
+}
+
+bool ConstraintSystem::solveForDisjunctionChoices(
+    ArrayRef<Constraint *> choices, ConstraintLocator *disjunctionLocator,
+    bool isExplicitConversion, SmallVectorImpl<Solution> &solutions) {
+  Optional<Score> bestNonGenericScore;
+  Optional<std::pair<Constraint *, Score>> lastSolvedChoice;
+
+  DisjunctionChoiceProducer producer(*this, choices, disjunctionLocator,
+                                     isExplicitConversion);
+
+  // Try each of the constraints within the disjunction.
+  while (auto currentChoice = producer()) {
+    if (shouldSkipDisjunctionChoice(*this, *currentChoice, bestNonGenericScore))
+      continue;
+
+    // We already have a solution; check whether we should
+    // short-circuit the disjunction.
+    if (lastSolvedChoice) {
+      auto *choice = choices[currentChoice->getIndex()];
+      auto *lastChoice = lastSolvedChoice->first;
+      auto delta = lastSolvedChoice->second - CurrentScore;
+      bool hasUnavailableOverloads = delta.Data[SK_Unavailable] > 0;
+      bool hasFixes = delta.Data[SK_Fix] > 0;
+
+      // Attempt to short-circuit evaluation of this disjunction only
+      // if the disjunction choice we are comparing to did not involve
+      // selecting unavailable overloads or result in fixes being
+      // applied to reach a solution.
+      if (!hasUnavailableOverloads && !hasFixes &&
+          shortCircuitDisjunctionAt(choice, lastChoice, getASTContext()))
+        break;
     }
 
-    solutions.push_back(std::move(solution));
-    return false;
+    if (TC.getLangOpts().DebugConstraintSolver) {
+      auto &log = getASTContext().TypeCheckerDebug->getStream();
+      log.indent(solverState->depth)
+        << "(assuming ";
+      currentChoice->print(log, &TC.Context.SourceMgr);
+      log << '\n';
+    }
+
+    // Try to solve the system with this option in the disjunction.
+    if (auto score = solveForDisjunctionChoice(*currentChoice,
+                                               disjunctionLocator, solutions)) {
+      if (!currentChoice->isGenericOperator() &&
+          currentChoice->isSymmetricOperator()) {
+        if (!bestNonGenericScore || score < bestNonGenericScore)
+          bestNonGenericScore = score;
+      }
+
+      lastSolvedChoice = {choices[currentChoice->getIndex()], *score};
+    }
+
+    if (TC.getLangOpts().DebugConstraintSolver) {
+      auto &log = getASTContext().TypeCheckerDebug->getStream();
+      log.indent(solverState->depth) << ")\n";
+    }
   }
+
+  return !bool(lastSolvedChoice.hasValue());
+}
+
+bool ConstraintSystem::solveForDisjunction(
+    Constraint *disjunction, SmallVectorImpl<Solution> &solutions) {
+  assert(disjunction->getKind() == ConstraintKind::Disjunction);
 
   // Remove this disjunction constraint from the list.
   auto afterDisjunction = InactiveConstraints.erase(disjunction);
@@ -1931,88 +1899,14 @@ bool ConstraintSystem::solveSimplified(
 
   bool hasDisabledChoices = pruneOverloadSet(disjunction);
 
-  Optional<std::pair<DisjunctionChoice, Score>> lastSolvedChoice;
-  Optional<Score> bestNonGenericScore;
-
   ++solverState->NumDisjunctions;
-  auto constraints = disjunction->getNestedConstraints();
-  // Try each of the constraints within the disjunction.
-  for (auto index : indices(constraints)) {
-    auto currentChoice =
-        DisjunctionChoice(this, disjunction, constraints[index]);
-    if (shouldSkipDisjunctionChoice(*this, currentChoice, bestNonGenericScore))
-      continue;
+  auto *locator =
+      disjunction->shouldRememberChoice() ? disjunction->getLocator() : nullptr;
+  assert(!disjunction->shouldRememberChoice() || disjunction->getLocator());
 
-    // We already have a solution; check whether we should
-    // short-circuit the disjunction.
-    if (lastSolvedChoice) {
-      Constraint *lastChoice = lastSolvedChoice->first;
-      auto &score = lastSolvedChoice->second;
-      bool hasUnavailableOverloads = score.Data[SK_Unavailable] > 0;
-      bool hasFixes = score.Data[SK_Fix] > 0;
-
-      // Attempt to short-circuit disjunction only if score indicates
-      // that there are no unavailable overload choices present in the
-      // solution, and the solution does not involve fixes.
-      if (!hasUnavailableOverloads && !hasFixes &&
-          shortCircuitDisjunctionAt(currentChoice, lastChoice, getASTContext()))
-        break;
-    }
-
-    // If the expression was deemed "too complex", stop now and salvage.
-    if (getExpressionTooComplex(solutions))
-      break;
-
-    // Try to solve the system with this option in the disjunction.
-    SolverScope scope(*this);
-    ++solverState->NumDisjunctionTerms;
-    if (TC.getLangOpts().DebugConstraintSolver) {
-      auto &log = getASTContext().TypeCheckerDebug->getStream();
-      log.indent(solverState->depth)
-        << "(assuming ";
-      currentChoice->print(log, &TC.Context.SourceMgr);
-      log << '\n';
-    }
-
-    // If the disjunction requested us to, remember which choice we
-    // took for it.
-    if (disjunction->shouldRememberChoice()) {
-      auto locator = disjunction->getLocator();
-      assert(locator && "remembered disjunction doesn't have a locator?");
-      DisjunctionChoices.push_back({locator, index});
-
-      // Implicit unwraps of optionals are worse solutions than those
-      // not involving implicit unwraps.
-      if (!locator->getPath().empty()) {
-        auto kind = locator->getPath().back().getKind();
-        if (kind == ConstraintLocator::ImplicitlyUnwrappedDisjunctionChoice ||
-            kind == ConstraintLocator::DynamicLookupResult) {
-          assert(index == 0 || index == 1);
-          if (index == 1)
-            increaseScore(SK_ForceUnchecked);
-        }
-      }
-    }
-
-    if (auto score = currentChoice.solve(solutions, allowFreeTypeVariables)) {
-      if (!currentChoice.isGenericOperator() &&
-          currentChoice.isSymmetricOperator()) {
-        if (!bestNonGenericScore || score < bestNonGenericScore)
-          bestNonGenericScore = score;
-      }
-
-      lastSolvedChoice = {currentChoice, *score};
-    }
-
-    if (TC.getLangOpts().DebugConstraintSolver) {
-      auto &log = getASTContext().TypeCheckerDebug->getStream();
-      log.indent(solverState->depth) << ")\n";
-    }
-  }
-
-  // Put the disjunction constraint back in its place.
-  InactiveConstraints.insert(afterDisjunction, disjunction);
-  CG.addConstraint(disjunction);
+  auto noSolutions = solveForDisjunctionChoices(
+      disjunction->getNestedConstraints(), locator,
+      disjunction->isExplicitConversion(), solutions);
 
   if (hasDisabledChoices) {
     // Re-enable previously disabled overload choices.
@@ -2022,39 +1916,74 @@ bool ConstraintSystem::solveSimplified(
     }
   }
 
-  // If we are exiting due to an expression that is too complex, do
-  // not allow our caller to continue as if we have been successful.
-  auto tooComplex = getExpressionTooComplex(solutions);
-  return tooComplex || !lastSolvedChoice;
+  // Put the disjunction constraint back in its place.
+  InactiveConstraints.insert(afterDisjunction, disjunction);
+  CG.addConstraint(disjunction);
+
+  return noSolutions;
 }
 
-Optional<Score>
-DisjunctionChoice::solve(SmallVectorImpl<Solution> &solutions,
-                         FreeTypeVariableBinding allowFreeTypeVariables) {
-  CS->simplifyDisjunctionChoice(Choice);
+bool ConstraintSystem::solveSimplified(SmallVectorImpl<Solution> &solutions) {
+  auto *disjunction = selectDisjunction();
+  auto bestBindings = determineBestBindings();
 
-  propagateConversionInfo();
-  if (CS->solveRec(solutions, allowFreeTypeVariables))
-    return None;
+  // If we've already explored a lot of potential solutions, bail.
+  if (getExpressionTooComplex(solutions))
+    return true;
 
-  assert (!solutions.empty());
-
-  Score bestScore = solutions.front().getFixedScore();
-
-  if (solutions.size() == 1)
-    return bestScore;
-
-  for (unsigned i = 1, n = solutions.size(); i != n; ++i) {
-    auto &score = solutions[i].getFixedScore();
-    if (score < bestScore)
-      bestScore = score;
+  // If we have a binding that does not involve type variables, and is
+  // not fully bound, or we have no disjunction to attempt instead,
+  // go ahead and try the bindings for this type variable.
+  if (bestBindings && (!disjunction || (!bestBindings->InvolvesTypeVariables &&
+                                        !bestBindings->FullyBound))) {
+    return tryTypeVariableBindings(bestBindings->TypeVar,
+                                   bestBindings->Bindings, solutions);
   }
 
-  return bestScore;
+  if (disjunction)
+    return solveForDisjunction(disjunction, solutions);
+
+  // If there are no disjunctions we can't solve this system unless we have
+  // free type variables and are allowing them in the solution.
+  if (!solverState->allowsFreeTypeVariables() || !hasFreeTypeVariables())
+    return true;
+
+  // If this solution is worse than the best solution we've seen so far,
+  // skip it.
+  if (worseThanBestSolution())
+    return true;
+
+  // If we only have relational or member constraints and are allowing
+  // free type variables, save the solution.
+  for (auto &constraint : InactiveConstraints) {
+    switch (constraint.getClassification()) {
+    case ConstraintClassification::Relational:
+    case ConstraintClassification::Member:
+      continue;
+    default:
+      return true;
+    }
+  }
+
+  auto solution = finalize();
+  if (TC.getLangOpts().DebugConstraintSolver) {
+    auto &log = getASTContext().TypeCheckerDebug->getStream();
+    log.indent(solverState->depth * 2) << "(found solution)\n";
+  }
+
+  solutions.push_back(std::move(solution));
+  return false;
 }
 
-bool DisjunctionChoice::isGenericOperator() const {
-  auto *decl = getOperatorDecl();
+void DisjunctionChoice::attempt(ConstraintSystem &cs) const {
+  cs.simplifyDisjunctionChoice(Choice);
+
+  if (ExplicitConversion)
+    propagateConversionInfo(cs);
+}
+
+bool DisjunctionChoice::isGenericOp(Constraint *choice) {
+  auto *decl = getOperatorDecl(choice);
   if (!decl)
     return false;
 
@@ -2062,27 +1991,23 @@ bool DisjunctionChoice::isGenericOperator() const {
   return interfaceType->is<GenericFunctionType>();
 }
 
-bool DisjunctionChoice::isSymmetricOperator() const {
-  auto *decl = getOperatorDecl();
+bool DisjunctionChoice::isSymmetricOp(Constraint *choice) {
+  auto *decl = getOperatorDecl(choice);
   if (!decl)
     return false;
 
   auto func = dyn_cast<FuncDecl>(decl);
-  auto paramList =
-      func->getParameterList(func->getDeclContext()->isTypeContext());
+  auto paramList = func->getParameters();
   if (paramList->size() != 2)
     return true;
 
-  auto firstType =
-      paramList->get(0)->getInterfaceType()->getWithoutSpecifierType();
-  auto secondType =
-      paramList->get(1)->getInterfaceType()->getWithoutSpecifierType();
+  auto firstType = paramList->get(0)->getInterfaceType();
+  auto secondType = paramList->get(1)->getInterfaceType();
   return firstType->isEqual(secondType);
 }
 
-void DisjunctionChoice::propagateConversionInfo() const {
-  if (!CS->isExplicitConversionConstraint(Disjunction))
-    return;
+void DisjunctionChoice::propagateConversionInfo(ConstraintSystem &cs) const {
+  assert(ExplicitConversion);
 
   auto LHS = Choice->getFirstType();
   auto typeVar = LHS->getAs<TypeVariableType>();
@@ -2098,31 +2023,28 @@ void DisjunctionChoice::propagateConversionInfo() const {
   if (typeVar->getImpl().getFixedType(nullptr))
     return;
 
-  auto bindings = CS->getPotentialBindings(typeVar);
+  auto bindings = cs.getPotentialBindings(typeVar);
   if (bindings.InvolvesTypeVariables || bindings.Bindings.size() != 1)
     return;
 
   auto conversionType = bindings.Bindings[0].BindingType;
-  SmallVector<Constraint *, 4> constraints;
-  CS->CG.gatherConstraints(typeVar, constraints,
-                           ConstraintGraph::GatheringKind::EquivalenceClass);
+  llvm::SetVector<Constraint *> constraints;
+  cs.CG.gatherConstraints(typeVar, constraints,
+                          ConstraintGraph::GatheringKind::EquivalenceClass,
+                          [](Constraint *constraint) -> bool {
+                            switch (constraint->getKind()) {
+                            case ConstraintKind::Conversion:
+                            case ConstraintKind::Defaultable:
+                            case ConstraintKind::ConformsTo:
+                            case ConstraintKind::LiteralConformsTo:
+                              return false;
 
-  bool viableForBinding = true;
-  for (auto adjacent : constraints) {
-    switch (adjacent->getKind()) {
-    case ConstraintKind::Conversion:
-    case ConstraintKind::Defaultable:
-    case ConstraintKind::ConformsTo:
-    case ConstraintKind::LiteralConformsTo:
-      break;
+                            default:
+                              return true;
+                            }
+                          });
 
-    default:
-      viableForBinding = false;
-      break;
-    }
-  }
-
-  if (viableForBinding)
-    CS->addConstraint(ConstraintKind::Bind, typeVar, conversionType,
-                      Choice->getLocator());
+  if (constraints.empty())
+    cs.addConstraint(ConstraintKind::Bind, typeVar, conversionType,
+                     Choice->getLocator());
 }

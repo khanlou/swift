@@ -19,7 +19,6 @@ import SwiftShims
 // FIXME: We could go farther with this simplification, e.g. avoiding
 // UnsafeMutablePointer
 
-@inlinable // FIXME(sil-serialize-all)
 @_transparent
 public // @testable
 func _isDebugAssertConfiguration() -> Bool {
@@ -30,8 +29,7 @@ func _isDebugAssertConfiguration() -> Bool {
   return Int32(Builtin.assert_configuration()) == 0
 }
 
-@inlinable // FIXME(sil-serialize-all)
-@_transparent
+@usableFromInline @_transparent
 internal func _isReleaseAssertConfiguration() -> Bool {
   // The values for the assert_configuration call are:
   // 0: Debug
@@ -40,7 +38,6 @@ internal func _isReleaseAssertConfiguration() -> Bool {
   return Int32(Builtin.assert_configuration()) == 1
 }
 
-@inlinable // FIXME(sil-serialize-all)
 @_transparent
 public // @testable
 func _isFastAssertConfiguration() -> Bool {
@@ -51,7 +48,6 @@ func _isFastAssertConfiguration() -> Bool {
   return Int32(Builtin.assert_configuration()) == 2
 }
 
-@inlinable // FIXME(sil-serialize-all)
 @_transparent
 public // @testable
 func _isStdlibInternalChecksEnabled() -> Bool {
@@ -62,8 +58,7 @@ func _isStdlibInternalChecksEnabled() -> Bool {
 #endif
 }
 
-@inlinable // FIXME(sil-serialize-all)
-@_transparent
+@usableFromInline @_transparent
 internal
 func _fatalErrorFlags() -> UInt32 {
   // The current flags are:
@@ -80,7 +75,7 @@ func _fatalErrorFlags() -> UInt32 {
 ///
 /// This function should not be inlined because it is cold and inlining just
 /// bloats code.
-@usableFromInline // FIXME(sil-serialize-all)
+@usableFromInline
 @inline(never)
 internal func _assertionFailure(
   _ prefix: StaticString, _ message: StaticString,
@@ -110,7 +105,7 @@ internal func _assertionFailure(
 ///
 /// This function should not be inlined because it is cold and inlining just
 /// bloats code.
-@usableFromInline // FIXME(sil-serialize-all)
+@usableFromInline
 @inline(never)
 internal func _assertionFailure(
   _ prefix: StaticString, _ message: String,
@@ -140,7 +135,7 @@ internal func _assertionFailure(
 ///
 /// This function should not be inlined because it is cold and inlining just
 /// bloats code.
-@usableFromInline // FIXME(sil-serialize-all)
+@usableFromInline
 @inline(never)
 internal func _assertionFailure(
   _ prefix: StaticString, _ message: String,
@@ -165,7 +160,7 @@ internal func _assertionFailure(
 ///
 /// This function should not be inlined because it is cold and it inlining just
 /// bloats code.
-@usableFromInline // FIXME(sil-serialize-all)
+@usableFromInline
 @inline(never)
 @_semantics("arc.programtermination_point")
 internal func _fatalErrorMessage(
@@ -206,7 +201,6 @@ internal func _fatalErrorMessage(
 
 /// Prints a fatal error message when an unimplemented initializer gets
 /// called by the Objective-C runtime.
-@inlinable // FIXME(sil-serialize-all)
 @_transparent
 public // COMPILER_INTRINSIC
 func _unimplementedInitializer(className: StaticString,
@@ -252,7 +246,6 @@ func _unimplementedInitializer(className: StaticString,
   Builtin.int_trap()
 }
 
-// FIXME(ABI)#21 (Type Checker): rename to something descriptive.
 @inlinable // FIXME(sil-serialize-all)
 public // COMPILER_INTRINSIC
 func _undefined<T>(

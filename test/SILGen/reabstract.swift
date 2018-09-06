@@ -1,6 +1,6 @@
 
-// RUN: %target-swift-frontend -module-name reabstract -Xllvm -sil-full-demangle -emit-silgen -enable-sil-ownership %s | %FileCheck %s
-// RUN: %target-swift-frontend -module-name reabstract -Xllvm -sil-full-demangle -emit-sil -enable-sil-ownership %s | %FileCheck %s --check-prefix=MANDATORY
+// RUN: %target-swift-emit-silgen -module-name reabstract -Xllvm -sil-full-demangle -enable-sil-ownership %s | %FileCheck %s
+// RUN: %target-swift-emit-sil -module-name reabstract -Xllvm -sil-full-demangle -enable-sil-ownership %s | %FileCheck %s --check-prefix=MANDATORY
 
 func takeFn<T>(_ f : (T) -> T?) {}
 func liftOptional(_ x : Int) -> Int? { return x }
@@ -103,3 +103,13 @@ closureTakingOptional({ (_: Any) -> () in })
 // CHECK:   [[OPTADDR:%.*]] = init_existential_addr [[ANYADDR]] : $*Any, $Optional<Int>
 // CHECK:   store %0 to [trivial] [[OPTADDR]] : $*Optional<Int>
 // CHECK:   apply %1([[ANYADDR]]) : $@noescape @callee_guaranteed (@in_guaranteed Any) -> ()
+
+// Same behavior as above with other ownership qualifiers.
+func evenLessFun(_ s: __shared C, _ o: __owned C) {}
+
+// CHECK-LABEL: sil shared [transparent] [serializable] [reabstraction_thunk] @$S10reabstract1CCACIeggx_A2CytIegnir_TR : $@convention(thin) (@in_guaranteed C, @in C, @guaranteed @callee_guaranteed (@guaranteed C, @owned C) -> ()) -> @out ()
+// CHECK-LABEL: sil shared [transparent] [serializable] [reabstraction_thunk] @$S10reabstract1CCACytIegnir_A2CIeggx_TR : $@convention(thin) (@guaranteed C, @owned C, @guaranteed @callee_guaranteed (@in_guaranteed C, @in C) -> @out ()) -> ()
+func testSharedOwnedOpaque(_ s: C, o: C) {
+  let box = Box(t: evenLessFun)
+  box.t(s, o)
+}

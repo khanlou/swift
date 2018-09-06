@@ -136,6 +136,19 @@ STMT_NODES = [
                    is_optional=True),
          ]),
 
+    # yield-stmt -> 'yield' '('? expr-list? ')'?
+    Node('YieldStmt', kind='Stmt',
+         children=[
+             Child('YieldKeyword', kind='YieldToken'),
+             Child('LeftParen', kind='LeftParenToken',
+                   is_optional=True),
+             Child('Expression', kind='Expr'),  # FIXME: allow list
+             Child('RightParen', kind='RightParenToken',
+                   is_optional=True),
+             Child('Semicolon', kind='SemicolonToken',
+                   is_optional=True),
+         ]),
+
     # fallthrough-stmt -> 'fallthrough' ';'?
     Node('FallthroughStmt', kind='Stmt',
          children=[
@@ -173,10 +186,14 @@ STMT_NODES = [
              Child('TrailingComma', kind='CommaToken',
                    is_optional=True),
          ]),
+
+    # availability-condition -> '#available' '(' availability-spec ')'
     Node('AvailabilityCondition', kind='Syntax',
          children=[
              Child('PoundAvailableKeyword', kind='PoundAvailableToken'),
-             Child('Arguments', kind='TokenList'),
+             Child('LeftParen', kind='LeftParenToken'),
+             Child('AvailabilitySpec', kind='AvailabilitySpecList'),
+             Child('RightParen', kind='RightParenToken'),
          ]),
     Node('MatchingPatternCondition', kind='Syntax',
          children=[

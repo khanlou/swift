@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name protocol_extensions -disable-objc-attr-requires-foundation-module -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name protocol_extensions -disable-objc-attr-requires-foundation-module -enable-objc-interop %s | %FileCheck %s
 
 public protocol P1 {
   func reqP1a()
@@ -12,7 +12,7 @@ struct Box {
 
 extension P1 {
   // CHECK-LABEL: sil hidden @$S19protocol_extensions2P1PAAE6extP1a{{[_0-9a-zA-Z]*}}F : $@convention(method) <Self where Self : P1> (@in_guaranteed Self) -> () {
-  // CHECK: bb0([[SELF:%[0-9]+]] : $*Self):
+  // CHECK: bb0([[SELF:%[0-9]+]] : @trivial $*Self):
   func extP1a() {
     // CHECK: [[WITNESS:%[0-9]+]] = witness_method $Self, #P1.reqP1a!1 : {{.*}} : $@convention(witness_method: P1) <τ_0_0 where τ_0_0 : P1> (@in_guaranteed τ_0_0) -> ()
     // CHECK-NEXT: apply [[WITNESS]]<Self>([[SELF]]) : $@convention(witness_method: P1) <τ_0_0 where τ_0_0 : P1> (@in_guaranteed τ_0_0) -> ()
@@ -21,7 +21,7 @@ extension P1 {
   }
 
   // CHECK-LABEL: sil @$S19protocol_extensions2P1PAAE6extP1b{{[_0-9a-zA-Z]*}}F : $@convention(method) <Self where Self : P1> (@in_guaranteed Self) -> () {
-  // CHECK: bb0([[SELF:%[0-9]+]] : $*Self):
+  // CHECK: bb0([[SELF:%[0-9]+]] : @trivial $*Self):
   public func extP1b() {
     // CHECK: [[FN:%[0-9]+]] = function_ref @$S19protocol_extensions2P1PAAE6extP1a{{[_0-9a-zA-Z]*}}F : $@convention(method) <τ_0_0 where τ_0_0 : P1> (@in_guaranteed τ_0_0) -> ()
     // CHECK-NEXT: apply [[FN]]<Self>([[SELF]]) : $@convention(method) <τ_0_0 where τ_0_0 : P1> (@in_guaranteed τ_0_0) -> ()
@@ -30,7 +30,7 @@ extension P1 {
   }
 
   subscript(i: Int) -> Int {
-    // materializeForSet can do static dispatch to peer accessors (tested later, in the emission of the concrete conformance)
+    // modify can do static dispatch to peer accessors (tested later, in the emission of the concrete conformance)
     get {
       return 0
     }
@@ -41,7 +41,7 @@ extension P1 {
     // But here we have to do a witness method call:
 
     // CHECK-LABEL: sil hidden @$S19protocol_extensions2P1PAAE13callSubscript{{[_0-9a-zA-Z]*}}F
-    // CHECK: bb0(%0 : $*Self):
+    // CHECK: bb0(%0 : @trivial $*Self):
     // CHECK: witness_method $Self, #P1.subscript!getter.1
     // CHECK: return
     return self[0]
@@ -69,9 +69,9 @@ class C : P1 {
   func reqP1a() { }
 }
 
-//   (materializeForSet test from above)
-// CHECK-LABEL: sil private [transparent] [thunk] @$S19protocol_extensions1CCAA2P1A2aDPyS2icimTW
-// CHECK: bb0(%0 : $Builtin.RawPointer, %1 : $*Builtin.UnsafeValueBuffer, %2 : $Int, %3 : $*τ_0_0):
+//   (modify test from above)
+// CHECK-LABEL: sil private [transparent] [thunk] @$S19protocol_extensions1CCAA2P1A2aDPyS2iciMTW
+// CHECK: bb0(%0 : @trivial $Int, %1 : @trivial $*τ_0_0):
 // CHECK: function_ref @$S19protocol_extensions2P1PAAEyS2icig
 // CHECK: return
 
@@ -97,7 +97,7 @@ struct GenericMetaHolder<T> {
 func inout_func(_ n: inout Int) {}
 
 // CHECK-LABEL: sil hidden @$S19protocol_extensions5testD_2dd1dyAA10MetaHolderV_AA1DCmAHtF : $@convention(thin) (MetaHolder, @thick D.Type, @guaranteed D) -> ()
-// CHECK: bb0([[M:%[0-9]+]] : $MetaHolder, [[DD:%[0-9]+]] : $@thick D.Type, [[D:%[0-9]+]] : $D):
+// CHECK: bb0([[M:%[0-9]+]] : @trivial $MetaHolder, [[DD:%[0-9]+]] : @trivial $@thick D.Type, [[D:%[0-9]+]] : @guaranteed $D):
 func testD(_ m: MetaHolder, dd: D.Type, d: D) {
   // CHECK: [[D2:%[0-9]+]] = alloc_box ${ var D }
   // CHECK: [[RESULT:%.*]] = project_box [[D2]]
@@ -497,7 +497,7 @@ extension P1 {
 }
 
 // CHECK-LABEL: sil hidden @$S19protocol_extensions17testExistentials1{{[_0-9a-zA-Z]*}}F
-// CHECK: bb0([[P:%[0-9]+]] : $*P1, [[B:%[0-9]+]] : $Bool, [[I:%[0-9]+]] : $Int64):
+// CHECK: bb0([[P:%[0-9]+]] : @trivial $*P1, [[B:%[0-9]+]] : @trivial $Bool, [[I:%[0-9]+]] : @trivial $Int64):
 func testExistentials1(_ p1: P1, b: Bool, i: Int64) {
   // CHECK: [[POPENED:%[0-9]+]] = open_existential_addr immutable_access [[P]] : $*P1 to $*@opened([[UUID:".*"]])
   // CHECK: [[F1:%[0-9]+]] = function_ref @$S19protocol_extensions2P1PAAE2f1{{[_0-9a-zA-Z]*}}F
@@ -523,19 +523,19 @@ func testExistentials1(_ p1: P1, b: Bool, i: Int64) {
 }
 
 // CHECK-LABEL: sil hidden @$S19protocol_extensions17testExistentials2{{[_0-9a-zA-Z]*}}F
-// CHECK: bb0([[P:%[0-9]+]] : $*P1):
+// CHECK: bb0([[P:%[0-9]+]] : @trivial $*P1):
 func testExistentials2(_ p1: P1) {
   // CHECK: [[P1A:%[0-9]+]] = alloc_box ${ var P1 }
   // CHECK: [[PB:%.*]] = project_box [[P1A]]
   // CHECK: [[POPENED:%[0-9]+]] = open_existential_addr immutable_access [[P]] : $*P1 to $*@opened([[UUID:".*"]]) P1
-  // CHECK: [[P1AINIT:%[0-9]+]] = init_existential_addr [[PB]] : $*P1, $@opened([[UUID2:".*"]]) P1
   // CHECK: [[FN:%[0-9]+]] = function_ref @$S19protocol_extensions2P1PAAE11returnsSelf{{[_0-9a-zA-Z]*}}F
+  // CHECK: [[P1AINIT:%[0-9]+]] = init_existential_addr [[PB]] : $*P1, $@opened([[UUID2:".*"]]) P1
   // CHECK: apply [[FN]]<@opened([[UUID]]) P1>([[P1AINIT]], [[POPENED]]) : $@convention(method) <τ_0_0 where τ_0_0 : P1> (@in_guaranteed τ_0_0) -> @out τ_0_0
   var p1a: P1 = p1.returnsSelf()
 }
 
 // CHECK-LABEL: sil hidden @$S19protocol_extensions23testExistentialsGetters{{[_0-9a-zA-Z]*}}F
-// CHECK: bb0([[P:%[0-9]+]] : $*P1):
+// CHECK: bb0([[P:%[0-9]+]] : @trivial $*P1):
 func testExistentialsGetters(_ p1: P1) {
   // CHECK: [[POPENED:%[0-9]+]] = open_existential_addr immutable_access [[P]] : $*P1 to $*@opened([[UUID:".*"]]) P1
   // CHECK: copy_addr [[POPENED]] to [initialization] [[POPENED_COPY:%.*]] :
@@ -551,7 +551,7 @@ func testExistentialsGetters(_ p1: P1) {
 }
 
 // CHECK-LABEL: sil hidden @$S19protocol_extensions22testExistentialSetters{{[_0-9a-zA-Z]*}}F
-// CHECK: bb0([[P:%[0-9]+]] : $*P1, [[B:%[0-9]+]] : $Bool):
+// CHECK: bb0([[P:%[0-9]+]] : @trivial $*P1, [[B:%[0-9]+]] : @trivial $Bool):
 func testExistentialSetters(_ p1: P1, b: Bool) {
   var p1 = p1
   // CHECK: [[PBOX:%[0-9]+]] = alloc_box ${ var P1 }
@@ -584,7 +584,7 @@ struct HasAP1 {
 }
 
 // CHECK-LABEL: sil hidden @$S19protocol_extensions29testLogicalExistentialSetters{{[_0-9a-zA-Z]*}}F
-// CHECK: bb0([[HASP1:%[0-9]+]] : $*HasAP1, [[B:%[0-9]+]] : $Bool)
+// CHECK: bb0([[HASP1:%[0-9]+]] : @trivial $*HasAP1, [[B:%[0-9]+]] : @trivial $Bool)
 func testLogicalExistentialSetters(_ hasAP1: HasAP1, _ b: Bool) {
   var hasAP1 = hasAP1
   // CHECK: [[HASP1_BOX:%[0-9]+]] = alloc_box ${ var HasAP1 }
@@ -650,7 +650,7 @@ extension CP1 {
 func plusOneCP1() -> CP1 {}
 
 // CHECK-LABEL: sil hidden @$S19protocol_extensions37test_open_existential_semantics_class{{[_0-9a-zA-Z]*}}F
-// CHECK: bb0([[ARG0:%.*]] : $CP1, [[ARG1:%.*]] : $CP1):
+// CHECK: bb0([[ARG0:%.*]] : @guaranteed $CP1, [[ARG1:%.*]] : @guaranteed $CP1):
 func test_open_existential_semantics_class(_ guaranteed: CP1,
                                            immediate: CP1) {
   var immediate = immediate
@@ -691,7 +691,7 @@ protocol InitRequirement {
 
 extension InitRequirement {
   // CHECK-LABEL: sil hidden @$S19protocol_extensions15InitRequirementPAAE1dxAA1DC_tcfC : $@convention(method) <Self where Self : InitRequirement> (@owned D, @thick Self.Type) -> @out Self
-  // CHECK:       bb0([[OUT:%.*]] : $*Self, [[ARG:%.*]] : $D, [[SELF_TYPE:%.*]] : $@thick Self.Type):
+  // CHECK:       bb0([[OUT:%.*]] : @trivial $*Self, [[ARG:%.*]] : @owned $D, [[SELF_TYPE:%.*]] : @trivial $@thick Self.Type):
   init(d: D) {
     // CHECK:      [[SELF_BOX:%.*]] = alloc_box
     // CHECK-NEXT: [[UNINIT_SELF:%.*]] = mark_uninitialized [delegatingself] [[SELF_BOX]]
@@ -702,7 +702,7 @@ extension InitRequirement {
     // CHECK-NEXT: [[ARG_COPY_CAST:%.*]] = upcast [[ARG_COPY]]
     // CHECK:      [[DELEGATEE:%.*]] = witness_method $Self, #InitRequirement.init!allocator.1 : {{.*}} : $@convention(witness_method: InitRequirement) <τ_0_0 where τ_0_0 : InitRequirement> (@owned C, @thick τ_0_0.Type) -> @out τ_0_0
     // CHECK-NEXT: apply [[DELEGATEE]]<Self>([[SELF_BOX]], [[ARG_COPY_CAST]], [[SELF_TYPE]])
-    // CHECK-NEXT: end_borrow [[BORROWED_ARG]] from [[ARG]]
+    // CHECK-NEXT: end_borrow [[BORROWED_ARG]]
     // CHECK-NEXT: copy_addr [take] [[SELF_BOX]] to [[SELF_BOX_ADDR]]
     // CHECK-NEXT: dealloc_stack [[SELF_BOX]]
     // CHECK-NEXT: copy_addr [[SELF_BOX_ADDR]] to [initialization] [[OUT]]
@@ -713,7 +713,7 @@ extension InitRequirement {
   }
 
   // CHECK-LABEL: sil hidden @$S19protocol_extensions15InitRequirementPAAE2d2xAA1DC_tcfC : $@convention(method)
-  // CHECK:       bb0([[OUT:%.*]] : $*Self, [[ARG:%.*]] : $D, [[SELF_TYPE:%.*]] : $@thick Self.Type):
+  // CHECK:       bb0([[OUT:%.*]] : @trivial $*Self, [[ARG:%.*]] : @owned $D, [[SELF_TYPE:%.*]] : @trivial $@thick Self.Type):
   init(d2: D) {
     // CHECK:      [[SELF_BOX:%.*]] = alloc_box
     // CHECK-NEXT: [[UNINIT_SELF:%.*]] = mark_uninitialized [delegatingself] [[SELF_BOX]]
@@ -723,7 +723,7 @@ extension InitRequirement {
     // CHECK-NEXT: [[ARG_COPY:%.*]] = copy_value [[BORROWED_ARG]]
     // CHECK:      [[DELEGATEE:%.*]] = function_ref @$S19protocol_extensions15InitRequirementPAAE1dxAA1DC_tcfC
     // CHECK-NEXT: apply [[DELEGATEE]]<Self>([[SELF_BOX]], [[ARG_COPY]], [[SELF_TYPE]])
-    // CHECK-NEXT: end_borrow [[BORROWED_ARG]] from [[ARG]]
+    // CHECK-NEXT: end_borrow [[BORROWED_ARG]]
     // CHECK-NEXT: copy_addr [take] [[SELF_BOX]] to [[SELF_BOX_ADDR]]
     // CHECK-NEXT: dealloc_stack [[SELF_BOX]]
     // CHECK-NEXT: copy_addr [[SELF_BOX_ADDR]] to [initialization] [[OUT]]
@@ -734,7 +734,7 @@ extension InitRequirement {
   }
 
   // CHECK-LABEL: sil hidden @$S19protocol_extensions15InitRequirementPAAE2c2xAA1CC_tcfC  : $@convention(method)
-  // CHECK:       bb0([[OUT:%.*]] : $*Self, [[ARG:%.*]] : $C, [[SELF_TYPE:%.*]] : $@thick Self.Type):
+  // CHECK:       bb0([[OUT:%.*]] : @trivial $*Self, [[ARG:%.*]] : @owned $C, [[SELF_TYPE:%.*]] : @trivial $@thick Self.Type):
   init(c2: C) {
     // CHECK:      [[SELF_BOX:%.*]] = alloc_box
     // CHECK-NEXT: [[UNINIT_SELF:%.*]] = mark_uninitialized [delegatingself] [[SELF_BOX]]
@@ -745,7 +745,7 @@ extension InitRequirement {
     // CHECK-NEXT: [[ARG_COPY:%.*]] = copy_value [[BORROWED_ARG]]
     // CHECK:      [[DELEGATEE:%.*]] = witness_method $Self, #InitRequirement.init!allocator.1
     // CHECK-NEXT: apply [[DELEGATEE]]<Self>([[SELF_BOX]], [[ARG_COPY]], [[SELF_TYPE]])
-    // CHECK-NEXT: end_borrow [[BORROWED_ARG]] from [[ARG]]
+    // CHECK-NEXT: end_borrow [[BORROWED_ARG]]
     // CHECK-NEXT: [[ACCESS:%.*]] = begin_access [modify] [unknown] [[SELF_BOX_ADDR]]
     // CHECK-NEXT: copy_addr [take] [[SELF_BOX]] to [[ACCESS]]
     // CHECK-NEXT: end_access [[ACCESS]]
@@ -764,13 +764,13 @@ protocol ClassInitRequirement: class {
 
 extension ClassInitRequirement {
   // CHECK-LABEL: sil hidden @$S19protocol_extensions20ClassInitRequirementPAAE{{[_0-9a-zA-Z]*}}fC : $@convention(method) <Self where Self : ClassInitRequirement> (@owned D, @thick Self.Type) -> @owned Self
-  // CHECK:       bb0([[ARG:%.*]] : $D, [[SELF_TYPE:%.*]] : $@thick Self.Type):
+  // CHECK:       bb0([[ARG:%.*]] : @owned $D, [[SELF_TYPE:%.*]] : @trivial $@thick Self.Type):
   // CHECK:         [[BORROWED_ARG:%.*]] = begin_borrow [[ARG]]
   // CHECK:         [[ARG_COPY:%.*]] = copy_value [[BORROWED_ARG]]
   // CHECK:         [[ARG_COPY_CAST:%.*]] = upcast [[ARG_COPY]]
   // CHECK:         [[DELEGATEE:%.*]] = witness_method $Self, #ClassInitRequirement.init!allocator.1 : {{.*}} : $@convention(witness_method: ClassInitRequirement) <τ_0_0 where τ_0_0 : ClassInitRequirement> (@owned C, @thick τ_0_0.Type) -> @owned τ_0_0
   // CHECK:         apply [[DELEGATEE]]<Self>([[ARG_COPY_CAST]], [[SELF_TYPE]])
-  // CHECK:         end_borrow [[BORROWED_ARG]] from [[ARG]]
+  // CHECK:         end_borrow [[BORROWED_ARG]]
   
   // CHECK: } // end sil function '$S19protocol_extensions20ClassInitRequirementPAAE{{[_0-9a-zA-Z]*}}fC'
   init(d: D) {
@@ -791,7 +791,7 @@ func foo(_ t: ObjCInitRequirement.Type, c: OC) -> ObjCInitRequirement {
 
 extension ObjCInitRequirement {
   // CHECK-LABEL: sil hidden @$S19protocol_extensions19ObjCInitRequirementPAAE{{[_0-9a-zA-Z]*}}fC : $@convention(method) <Self where Self : ObjCInitRequirement> (@owned OD, @thick Self.Type) -> @owned Self
-  // CHECK:       bb0([[ARG:%.*]] : $OD, [[SELF_TYPE:%.*]] : $@thick Self.Type):
+  // CHECK:       bb0([[ARG:%.*]] : @owned $OD, [[SELF_TYPE:%.*]] : @trivial $@thick Self.Type):
   // CHECK:         [[OBJC_SELF_TYPE:%.*]] = thick_to_objc_metatype [[SELF_TYPE]]
   // CHECK:         [[SELF:%.*]] = alloc_ref_dynamic [objc] [[OBJC_SELF_TYPE]] : $@objc_metatype Self.Type, $Self
   // CHECK:         [[BORROWED_ARG_1:%.*]] = begin_borrow [[ARG]]
@@ -800,8 +800,8 @@ extension ObjCInitRequirement {
   // CHECK:         [[BORROWED_ARG_2_UPCAST:%.*]] = upcast [[BORROWED_ARG_2]]
   // CHECK:         [[WITNESS:%.*]] = objc_method [[SELF]] : $Self, #ObjCInitRequirement.init!initializer.1.foreign : {{.*}}, $@convention(objc_method) <τ_0_0 where τ_0_0 : ObjCInitRequirement> (OC, OC, @owned τ_0_0) -> @owned τ_0_0
   // CHECK:         apply [[WITNESS]]<Self>([[BORROWED_ARG_1_UPCAST]], [[BORROWED_ARG_2_UPCAST]], [[SELF]])
-  // CHECK:         end_borrow [[BORROWED_ARG_2]] from [[ARG]]
-  // CHECK:         end_borrow [[BORROWED_ARG_1]] from [[ARG]]
+  // CHECK:         end_borrow [[BORROWED_ARG_2]]
+  // CHECK:         end_borrow [[BORROWED_ARG_1]]
   // CHECK: } // end sil function '$S19protocol_extensions19ObjCInitRequirementPAAE{{[_0-9a-zA-Z]*}}fC'
   init(d: OD) {
     self.init(c: d, d: d)
@@ -818,7 +818,7 @@ protocol ProtoDelegatesToObjC { }
 
 extension ProtoDelegatesToObjC where Self : ObjCInitClass {
   // CHECK-LABEL: sil hidden @$S19protocol_extensions20ProtoDelegatesToObjCPA2A0F10CInitClassC{{[_0-9a-zA-Z]*}}fC
-  // CHECK: bb0([[STR:%[0-9]+]] : $String, [[SELF_META:%[0-9]+]] : $@thick Self.Type):
+  // CHECK: bb0([[STR:%[0-9]+]] : @owned $String, [[SELF_META:%[0-9]+]] : @trivial $@thick Self.Type):
   init(string: String) {
     // CHECK:   [[SELF_BOX:%[0-9]+]] = alloc_box $<τ_0_0 where τ_0_0 : ObjCInitClass, τ_0_0 : ProtoDelegatesToObjC> { var τ_0_0 } <Self>
     // CHECK:   [[MARKED_SELF_BOX:%[0-9]+]] = mark_uninitialized [delegatingself] [[SELF_BOX]]
@@ -844,7 +844,7 @@ protocol ProtoDelegatesToRequired { }
 
 extension ProtoDelegatesToRequired where Self : RequiredInitClass {
   // CHECK-LABEL: sil hidden @$S19protocol_extensions24ProtoDelegatesToRequiredPA2A0F9InitClassC{{[_0-9a-zA-Z]*}}fC 
-  // CHECK: bb0([[STR:%[0-9]+]] : $String, [[SELF_META:%[0-9]+]] : $@thick Self.Type):
+  // CHECK: bb0([[STR:%[0-9]+]] : @owned $String, [[SELF_META:%[0-9]+]] : @trivial $@thick Self.Type):
   init(string: String) {
   // CHECK:   [[SELF_BOX:%[0-9]+]] = alloc_box $<τ_0_0 where τ_0_0 : RequiredInitClass, τ_0_0 : ProtoDelegatesToRequired> { var τ_0_0 } <Self>
   // CHECK:   [[MARKED_SELF_BOX:%[0-9]+]] = mark_uninitialized [delegatingself] [[SELF_BOX]]

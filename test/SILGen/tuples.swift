@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name tuples -emit-silgen -enable-sil-ownership %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name tuples -enable-sil-ownership %s | %FileCheck %s
 class C {}
 
 enum Foo {
@@ -120,20 +120,12 @@ func testTupleUnsplat() {
   // CHECK: [[TUPLE:%.+]] = tuple ([[X]] : $Int, [[Y]] : $Int)
   // CHECK: enum $GenericEnum<(Int, Int)>, #GenericEnum.one!enumelt.1, [[TUPLE]]
   _ = GenericEnum<(Int, Int)>.one((x, y))
-  // CHECK: [[TUPLE:%.+]] = tuple ([[X]] : $Int, [[Y]] : $Int)
-  // CHECK: enum $GenericEnum<(Int, Int)>, #GenericEnum.one!enumelt.1, [[TUPLE]]
-  _ = GenericEnum<(Int, Int)>.one(x, y)
 
   // CHECK: [[THUNK:%.+]] = function_ref @$SSi_SitIegn_S2iIegyy_TR
   // CHECK: [[REABSTRACTED:%.+]] = partial_apply [callee_guaranteed] [[THUNK]]({{%.+}})
   // CHECK: [[BORROW:%.*]] = begin_borrow [[REABSTRACTED]]
   // CHECK: apply [[BORROW]]([[X]], [[Y]])
   _ = GenericEnum<(Int, Int)>.callback((x, y))
-  // CHECK: [[THUNK:%.+]] = function_ref @$SSi_SitIegn_S2iIegyy_TR
-  // CHECK: [[REABSTRACTED:%.+]] = partial_apply [callee_guaranteed] [[THUNK]]({{%.+}})
-  // CHECK: [[BORROW:%.*]] = begin_borrow [[REABSTRACTED]]
-  // CHECK: apply [[BORROW]]([[X]], [[Y]])
-  _ = GenericEnum<(Int, Int)>.callback(x, y)
 } // CHECK: end sil function '$S6tuples16testTupleUnsplatyyF'
 
 // Make sure that we use a load_borrow instead of a load [take] when RValues are
@@ -157,10 +149,33 @@ extension P {
   // CHECK:   [[LOADED_CLASS:%.*]] = load_borrow [[ZERO_ADDR]]
   // CHECK:   [[ONE_ADDR:%.*]] = tuple_element_addr [[RVALUE]] : $*(index: C, value: Self), 1
   // CHECK:   apply {{.*}}([[ONE_ADDR]]) : $@convention(witness_method: P)
-  // CHECK:   end_borrow [[LOADED_CLASS]] from [[ZERO_ADDR]]
+  // CHECK:   end_borrow [[LOADED_CLASS]]
   // CHECK:   destroy_addr [[RVALUE]]
   // CHECK:   dealloc_stack [[RVALUE]]
   public static func immutableUse(tuple: (index: C, value: Self)) -> () {
     return tuple.value.foo()
   }
+}
+
+// CHECK-LABEL: sil @$S6tuples15testTupleAssign1xySaySiGz_tF : $@convention(thin) (@inout Array<Int>) -> () {
+// CHECK: [[ACCESS:%.*]] = begin_access [modify] [unknown] %0 : $*Array<Int>
+// function_ref Array.subscript.nativeOwningMutableAddressor
+// CHECK: [[ADDRESSOR:%.*]] = function_ref @$SSayxSiciao : $@convention(method) <τ_0_0> (Int, @inout Array<τ_0_0>) -> (UnsafeMutablePointer<τ_0_0>, @owned Builtin.NativeObject)
+// CHECK: [[TUPLE:%.*]] = apply [[ADDRESSOR]]<Int>(%{{.*}}, [[ACCESS]]) : $@convention(method) <τ_0_0> (Int, @inout Array<τ_0_0>) -> (UnsafeMutablePointer<τ_0_0>, @owned Builtin.NativeObject)
+// CHECK: ([[PTR:%.*]], [[OBJ:%.*]]) = destructure_tuple [[TUPLE]] : $(UnsafeMutablePointer<Int>, Builtin.NativeObject)
+// CHECK: assign %{{.*}} to %{{.*}} : $*Int
+// CHECK: end_access [[ACCESS]] : $*Array<Int>
+// CHECK: destroy_value [[OBJ]] : $Builtin.NativeObject
+//
+// CHECK: [[ACCESS:%.*]] = begin_access [modify] [unknown] %0 : $*Array<Int>
+// function_ref Array.subscript.nativeOwningMutableAddressor
+// CHECK: [[ADDRESSOR:%.*]] = function_ref @$SSayxSiciao : $@convention(method) <τ_0_0> (Int, @inout Array<τ_0_0>) -> (UnsafeMutablePointer<τ_0_0>, @owned Builtin.NativeObject)
+// CHECK: [[TUPLE:%.*]] = apply [[ADDRESSOR]]<Int>(%{{.*}}, [[ACCESS]]) : $@convention(method) <τ_0_0> (Int, @inout Array<τ_0_0>) -> (UnsafeMutablePointer<τ_0_0>, @owned Builtin.NativeObject)
+// CHECK: ([[PTR:%.*]], [[OBJ:%.*]]) = destructure_tuple [[TUPLE]] : $(UnsafeMutablePointer<Int>, Builtin.NativeObject)
+// CHECK: assign %{{.*}} to %{{.*}} : $*Int
+// CHECK: end_access [[ACCESS]] : $*Array<Int>
+// CHECK: destroy_value [[OBJ]] : $Builtin.NativeObject
+// CHECK-LABEL: } // end sil function '$S6tuples15testTupleAssign1xySaySiGz_tF'
+public func testTupleAssign(x: inout [Int]) {
+  (x[0], x[1]) = (0, 1)
 }

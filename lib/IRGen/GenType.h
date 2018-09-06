@@ -56,8 +56,6 @@ namespace irgen {
   class FixedTypeInfo;
   class LoadableTypeInfo;
   class TypeInfo;
-  class UnownedTypeInfo;
-  class WeakTypeInfo;
   
 /// Either a type or a forward-declaration.
 using TypeCacheEntry = llvm::PointerUnion<const TypeInfo *, llvm::Type *>;
@@ -69,20 +67,20 @@ public:
 private:
   bool CompletelyFragile = false;
 
-  llvm::DenseMap<ProtocolDecl*, const ProtocolInfo*> Protocols;
+  llvm::DenseMap<ProtocolDecl*, std::unique_ptr<const ProtocolInfo>> Protocols;
   const TypeInfo *FirstType;
   
-  const ProtocolInfo *FirstProtocol;
   const LoadableTypeInfo *NativeObjectTI = nullptr;
   const LoadableTypeInfo *UnknownObjectTI = nullptr;
   const LoadableTypeInfo *BridgeObjectTI = nullptr;
   const LoadableTypeInfo *RawPointerTI = nullptr;
   const LoadableTypeInfo *WitnessTablePtrTI = nullptr;
-  const LoadableTypeInfo *TypeMetadataPtrTI = nullptr;
-  const LoadableTypeInfo *ObjCClassPtrTI = nullptr;
+  const TypeInfo *TypeMetadataPtrTI = nullptr;
+  const TypeInfo *ObjCClassPtrTI = nullptr;
   const LoadableTypeInfo *EmptyTI = nullptr;
 
-  const TypeInfo *ResilientStructTI = nullptr;
+  const TypeInfo *AccessibleResilientStructTI = nullptr;
+  const TypeInfo *InaccessibleResilientStructTI = nullptr;
   
   llvm::DenseMap<std::pair<unsigned, unsigned>, const LoadableTypeInfo *>
     OpaqueStorageTypes;
@@ -92,7 +90,7 @@ private:
   llvm::DenseMap<std::pair<unsigned, unsigned>, const LoadableTypeInfo *>
     PODBoxTI;
   const LoadableTypeInfo *SwiftRetainablePointerBoxTI = nullptr,
-                         *UnknownRetainablePointerBoxTI = nullptr;
+                         *UnknownObjectRetainablePointerBoxTI = nullptr;
 
   const LoadableTypeInfo *createPrimitive(llvm::Type *T,
                                           Size size, Alignment align);
@@ -123,10 +121,10 @@ private:
   const LoadableTypeInfo *convertBuiltinNativeObject();
   const LoadableTypeInfo *convertBuiltinUnknownObject();
   const LoadableTypeInfo *convertBuiltinBridgeObject();
-  const TypeInfo *convertResilientStruct();
-  const TypeInfo *convertUnmanagedStorageType(UnmanagedStorageType *T);
-  const TypeInfo *convertUnownedStorageType(UnownedStorageType *T);
-  const TypeInfo *convertWeakStorageType(WeakStorageType *T);
+  const TypeInfo *convertResilientStruct(IsABIAccessible_t abiAccessible);
+#define REF_STORAGE(Name, ...) \
+  const TypeInfo *convert##Name##StorageType(Name##StorageType *T);
+#include "swift/AST/ReferenceStorage.def"
   
 public:
   TypeConverter(IRGenModule &IGM);
@@ -138,26 +136,25 @@ public:
 
   TypeCacheEntry getTypeEntry(CanType type);
   const TypeInfo &getCompleteTypeInfo(CanType type);
-  const TypeInfo *tryGetCompleteTypeInfo(CanType type);
   const LoadableTypeInfo &getNativeObjectTypeInfo();
   const LoadableTypeInfo &getUnknownObjectTypeInfo();
   const LoadableTypeInfo &getBridgeObjectTypeInfo();
   const LoadableTypeInfo &getRawPointerTypeInfo();
-  const LoadableTypeInfo &getTypeMetadataPtrTypeInfo();
-  const LoadableTypeInfo &getObjCClassPtrTypeInfo();
+  const TypeInfo &getTypeMetadataPtrTypeInfo();
+  const TypeInfo &getObjCClassPtrTypeInfo();
   const LoadableTypeInfo &getWitnessTablePtrTypeInfo();
   const LoadableTypeInfo &getEmptyTypeInfo();
-  const TypeInfo &getResilientStructTypeInfo();
-  const ProtocolInfo &getProtocolInfo(ProtocolDecl *P);
+  const TypeInfo &getResilientStructTypeInfo(IsABIAccessible_t abiAccessible);
+  const ProtocolInfo &getProtocolInfo(ProtocolDecl *P, ProtocolInfoKind kind);
   const LoadableTypeInfo &getOpaqueStorageTypeInfo(Size storageSize,
                                                    Alignment storageAlign);
-  const LoadableTypeInfo &getMetatypeTypeInfo(MetatypeRepresentation representation);
+  const TypeInfo &getMetatypeTypeInfo(MetatypeRepresentation representation);
 
-  const WeakTypeInfo *createWeakStorageType(llvm::Type *valueType,
-                                            ReferenceCounting style);
-  const TypeInfo *createUnownedStorageType(llvm::Type *valueType,
-                                           ReferenceCounting style);
-  const LoadableTypeInfo *createUnmanagedStorageType(llvm::Type *valueType);
+#define REF_STORAGE(Name, ...) \
+  const TypeInfo *create##Name##StorageType(llvm::Type *valueType, \
+                                            ReferenceCounting style, \
+                                            bool isOptional);
+#include "swift/AST/ReferenceStorage.def"
 
   /// Enter a generic context for lowering the parameters of a generic function
   /// type.
@@ -225,7 +222,7 @@ class CompletelyFragileScope {
   bool State;
   TypeConverter &TC;
 public:
-  CompletelyFragileScope(TypeConverter &TC) : TC(TC) {
+  explicit CompletelyFragileScope(TypeConverter &TC) : TC(TC) {
     State = TC.isCompletelyFragile();
     if (!State)
       TC.pushCompletelyFragile();

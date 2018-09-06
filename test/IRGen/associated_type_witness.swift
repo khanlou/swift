@@ -69,7 +69,7 @@ struct Fulfilled<T : P & Q> : Assocked {
 // CHECK-NEXT:    [[T3:%.*]] = call swiftcc %swift.metadata_response @swift_checkMetadataState(i64 %0, %swift.type* [[T2]])
 // CHECK-NEXT:    [[CHECKED:%.*]] = extractvalue %swift.metadata_response [[T3]], 0
 // CHECK-NEXT:    [[STATE:%.*]] = extractvalue %swift.metadata_response [[T3]], 1
-// CHECK-NEXT:    [[T3:%.*]] = insertvalue %swift.metadata_response undef, %swift.type* [[CHECKED]], 0
+// CHECK:         [[T3:%.*]] = insertvalue %swift.metadata_response undef, %swift.type* [[CHECKED]], 0
 // CHECK-NEXT:    [[T4:%.*]] = insertvalue %swift.metadata_response [[T3]], i64 [[STATE]], 1
 // CHECK-NEXT:    ret %swift.metadata_response [[T4]]
 
@@ -102,7 +102,7 @@ struct Pair<T, U> : P, Q {}
 // GLOBAL-SAME:    i16 1,
 
 //    Relative reference to protocol
-// GLOBAL-SAME:    i32 trunc (i64 sub (i64 ptrtoint (%swift.protocol* @"$S23associated_type_witness8AssockedMp" to i64), i64 ptrtoint (i32* getelementptr inbounds (%swift.generic_witness_table_cache, %swift.generic_witness_table_cache* @"$S23associated_type_witness8ComputedVyxq_GAA8AssockedAAWG", i32 0, i32 2) to i64)) to i32
+// GLOBAL-SAME:    i32 trunc (i64 sub (i64 ptrtoint ({{.*}} @"$S23associated_type_witness8AssockedMp" to i64), i64 ptrtoint (i32* getelementptr inbounds (%swift.generic_witness_table_cache, %swift.generic_witness_table_cache* @"$S23associated_type_witness8ComputedVyxq_GAA8AssockedAAWG", i32 0, i32 2) to i64)) to i32
 
 //    Relative reference to witness table template
 // GLOBAL-SAME:    i32 trunc (i64 sub (i64 ptrtoint ([4 x i8*]* @"$S23associated_type_witness8ComputedVyxq_GAA8AssockedAAWp" to i64), i64 ptrtoint (i32* getelementptr inbounds (%swift.generic_witness_table_cache, %swift.generic_witness_table_cache* @"$S23associated_type_witness8ComputedVyxq_GAA8AssockedAAWG", i32 0, i32 3) to i64)) to i32
@@ -142,7 +142,7 @@ struct Computed<T, U> : Assocked {
 // CHECK:         [[T0:%.*]] = bitcast %swift.type* %"Computed<T, U>" to %swift.type**
 // CHECK-NEXT:    [[T1:%.*]] = getelementptr inbounds %swift.type*, %swift.type** [[T0]], i64 3
 // CHECK-NEXT:    [[U:%.*]] = load %swift.type*, %swift.type** [[T1]], align 8, !invariant.load
-// CHECK-NEXT:    [[T0:%.*]] = call swiftcc %swift.metadata_response @"$S23associated_type_witness4PairVMa"(i64 %0, %swift.type* [[T]], %swift.type* [[U]])
+// CHECK:         [[T0:%.*]] = call swiftcc %swift.metadata_response @"$S23associated_type_witness4PairVMa"(i64 %0, %swift.type* [[T]], %swift.type* [[U]])
 // CHECK-NEXT:    [[FETCH_RESULT]] = extractvalue %swift.metadata_response [[T0]], 0
 // CHECK-NEXT:    [[FETCH_STATE]] = extractvalue %swift.metadata_response [[T0]], 1
 // CHECK-NEXT:    [[COMPLETE:%.*]] = icmp eq i64 [[FETCH_STATE]], 0
@@ -176,7 +176,7 @@ protocol DerivedFromSimpleAssoc : HasSimpleAssoc {}
 // GLOBAL-SAME:    i16 0,
 
 //   Relative reference to protocol
-// GLOBAL-SAME:    i32 trunc (i64 sub (i64 ptrtoint (%swift.protocol* @"$S23associated_type_witness22DerivedFromSimpleAssocMp" to i64
+// GLOBAL-SAME:    i32 trunc (i64 sub (i64 ptrtoint ({{.*}} @"$S23associated_type_witness22DerivedFromSimpleAssocMp" to i64
 
 //   Relative reference to witness table template
 // GLOBAL-SAME:    i32 trunc (i64 sub (i64 ptrtoint ([2 x i8*]* @"$S23associated_type_witness15GenericComputedVyxGAA22DerivedFromSimpleAssocAAWp" to i64
@@ -195,8 +195,8 @@ struct GenericComputed<T: P> : DerivedFromSimpleAssoc {
 }
 
 //   Instantiation function for GenericComputed : DerivedFromSimpleAssoc.
-// CHECK-LABEL: define internal void @"$S23associated_type_witness15GenericComputedVyxGAA22DerivedFromSimpleAssocAAWI"(i8**, %swift.type*, i8**)
-// CHECK:         [[T0:%.*]] = call i8** @"$S23associated_type_witness15GenericComputedVyxGAA14HasSimpleAssocAAWa"(%swift.type* %1, i8*** undef)
+// CHECK-LABEL: define internal void @"$S23associated_type_witness15GenericComputedVyxGAA22DerivedFromSimpleAssocAAWI"(i8**, %swift.type* %"GenericComputed<T>", i8**)
+// CHECK:         [[T0:%.*]] = call i8** @"$S23associated_type_witness15GenericComputedVyxGAA14HasSimpleAssocAAWa"(%swift.type* %"GenericComputed<T>", i8*** undef)
 // CHECK-NEXT:    [[T1:%.*]] = bitcast i8** [[T0]] to i8*
 // CHECK-NEXT:    [[T2:%.*]] = getelementptr inbounds i8*, i8** %0, i32 1
 // CHECK-NEXT:    store i8* [[T1]], i8** [[T2]], align 8

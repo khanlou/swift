@@ -20,6 +20,8 @@
 
 using namespace swift;
 
+static_assert(sizeof(SILLocation) == 3*sizeof(void *),
+              "SILLocation must stay small");
 
 SourceLoc SILLocation::getSourceLoc() const {
   if (isSILFile())
@@ -136,7 +138,7 @@ SILLocation::DebugLoc SILLocation::decode(SourceLoc Loc,
                                           const SourceManager &SM) {
   DebugLoc DL;
   if (Loc.isValid()) {
-    DL.Filename = SM.getBufferIdentifierForLoc(Loc);
+    DL.Filename = SM.getDisplayNameForLoc(Loc);
     std::tie(DL.Line, DL.Column) = SM.getLineAndColumn(Loc);
   }
   return DL;

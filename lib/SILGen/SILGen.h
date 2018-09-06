@@ -23,7 +23,6 @@
 #include "swift/SIL/SILModule.h"
 #include "swift/SIL/TypeLowering.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ProfileData/InstrProfReader.h"
 #include <deque>
 
 namespace swift {
@@ -249,7 +248,7 @@ public:
 
   /// Emits the default argument generator with the given expression.
   void emitDefaultArgGenerator(SILDeclRef constant, Expr *arg,
-                               DefaultArgumentKind kind);
+                               DefaultArgumentKind kind, DeclContext *DC);
 
   /// Emits the stored property initializer for the given pattern.
   void emitStoredPropertyInitialization(PatternBindingDecl *pd, unsigned i);
@@ -332,19 +331,24 @@ public:
 
   /// Emit a global initialization.
   void emitGlobalInitialization(PatternBindingDecl *initializer, unsigned elt);
-  
-  SILDeclRef getGetterDeclRef(AbstractStorageDecl *decl);
-  SILDeclRef getSetterDeclRef(AbstractStorageDecl *decl);
-  SILDeclRef getAddressorDeclRef(AbstractStorageDecl *decl,
-                                 AccessKind accessKind);
-  SILDeclRef getMaterializeForSetDeclRef(AbstractStorageDecl *decl);
+
+  /// Should the self argument of the given method always be emitted as
+  /// an r-value (meaning that it can be borrowed only if that is not
+  /// semantically detectable), or it acceptable to emit it as a borrowed
+  /// storage reference?
+  bool shouldEmitSelfAsRValue(FuncDecl *method, CanType selfType);
+
+  /// Is the self method of the given nonmutating method passed indirectly?
+  bool isNonMutatingSelfIndirect(SILDeclRef method);
+
+  SILDeclRef getAccessorDeclRef(AccessorDecl *accessor);
 
   KeyPathPatternComponent
   emitKeyPathComponentForDecl(SILLocation loc,
                               GenericEnvironment *genericEnv,
                               unsigned &baseOperand,
                               bool &needsGenericContext,
-                              SubstitutionList subs,
+                              SubstitutionMap subs,
                               AbstractStorageDecl *storage,
                               ArrayRef<ProtocolConformanceRef> indexHashables,
                               CanType baseTy,
@@ -426,7 +430,7 @@ public:
   void useConformance(ProtocolConformanceRef conformance);
 
   /// Mark protocol conformances from the given set of substitutions as used.
-  void useConformancesFromSubstitutions(SubstitutionList subs);
+  void useConformancesFromSubstitutions(SubstitutionMap subs);
 
   /// Emit a `mark_function_escape` instruction for top-level code when a
   /// function or closure at top level refers to script globals.
@@ -435,7 +439,7 @@ public:
 
   /// Get the substitutions necessary to invoke a non-member (global or local)
   /// property.
-  SubstitutionList
+  SubstitutionMap
   getNonMemberVarDeclSubstitutions(VarDecl *var);
 
   /// Emit a property descriptor for the given storage decl if it needs one.

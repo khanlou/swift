@@ -1,5 +1,5 @@
 
-// RUN: %target-swift-frontend -module-name witnesses_class -enable-sil-ownership -emit-silgen %s | %FileCheck %s
+// RUN: %target-swift-emit-silgen -module-name witnesses_class -enable-sil-ownership %s | %FileCheck %s
 
 protocol Fooable: class {
   func foo()
@@ -77,7 +77,7 @@ class UsesDefaults<X : Barable> : HasDefaults {}
 
 // Covariant Self:
 
-// CHECK-LABEL: sil private [transparent] [thunk] @$S15witnesses_class12UsesDefaultsCyxGAA03HasD0A2aEP10hasDefaultyyFTW : $@convention(witness_method: HasDefaults) <τ_0_0><τ_1_0 where τ_0_0 : UsesDefaults<τ_1_0>, τ_1_0 : Barable> (@in_guaranteed τ_0_0) -> ()
+// CHECK-LABEL: sil private [transparent] [thunk] @$S15witnesses_class12UsesDefaultsCyqd__GAA03HasD0A2aEP10hasDefaultyyFTW : $@convention(witness_method: HasDefaults) <τ_0_0><τ_1_0 where τ_0_0 : UsesDefaults<τ_1_0>, τ_1_0 : Barable> (@in_guaranteed τ_0_0) -> () {
 // CHECK: [[FN:%.*]] = function_ref @$S15witnesses_class11HasDefaultsPAAE10hasDefaultyyF : $@convention(method) <τ_0_0 where τ_0_0 : HasDefaults> (@in_guaranteed τ_0_0) -> ()
 // CHECK: apply [[FN]]<τ_0_0>(
 // CHECK: return
@@ -91,7 +91,7 @@ class UsesDefaults<X : Barable> : HasDefaults {}
 
 // Covariant Self:
 
-// CHECK-LABEL: sil private [transparent] [thunk] @$S15witnesses_class12UsesDefaultsCyxGAA03HasD0A2aEP17hasDefaultGenericyyqd__AA7FooableRd__lFTW : $@convention(witness_method: HasDefaults) <τ_0_0><τ_1_0 where τ_0_0 : UsesDefaults<τ_1_0>, τ_1_0 : Barable><τ_2_0 where τ_2_0 : Fooable> (@guaranteed τ_2_0, @in_guaranteed τ_0_0) -> ()
+// CHECK-LABEL: sil private [transparent] [thunk] @$S15witnesses_class12UsesDefaultsCyqd__GAA03HasD0A2aEP17hasDefaultGenericyyqd__AA7FooableRd__lFTW : $@convention(witness_method: HasDefaults) <τ_0_0><τ_1_0 where τ_0_0 : UsesDefaults<τ_1_0>, τ_1_0 : Barable><τ_2_0 where τ_2_0 : Fooable> (@guaranteed τ_2_0, @in_guaranteed τ_0_0) -> () {
 // CHECK: [[FN:%.*]] = function_ref @$S15witnesses_class11HasDefaultsPAAE17hasDefaultGenericyyqd__AA7FooableRd__lF : $@convention(method) <τ_0_0 where τ_0_0 : HasDefaults><τ_1_0 where τ_1_0 : Fooable> (@guaranteed τ_1_0, @in_guaranteed τ_0_0) -> ()
 // CHECK: apply [[FN]]<τ_0_0, τ_2_0>(
 // CHECK: return
@@ -102,3 +102,17 @@ class UsesDefaults<X : Barable> : HasDefaults {}
 // CHECK: [[FN:%.*]] = function_ref @$S15witnesses_class11HasDefaultsPAAE23hasDefaultGenericTakesTyy1TQz_qd__tAA7FooableRd__lF : $@convention(method) <τ_0_0 where τ_0_0 : HasDefaults><τ_1_0 where τ_1_0 : Fooable> (@in_guaranteed τ_0_0.T, @guaranteed τ_1_0, @in_guaranteed τ_0_0) -> ()
 // CHECK: apply [[FN]]<UsesDefaults<τ_0_0>, τ_1_0>(
 // CHECK: return
+
+protocol ReturnsCovariantSelf {
+  func returnsCovariantSelf() -> Self
+}
+extension ReturnsCovariantSelf {
+  func returnsCovariantSelf() -> Self { return self }
+}
+
+class NonMatchingMember: ReturnsCovariantSelf {
+  func returnsCovariantSelf() {}
+}
+
+// CHECK-LABEL: sil private [transparent] [thunk] @$S15witnesses_class17NonMatchingMemberCAA20ReturnsCovariantSelfA2aDP07returnsgH0xyFTW : $@convention(witness_method: ReturnsCovariantSelf) <τ_0_0 where τ_0_0 : NonMatchingMember> (@in_guaranteed τ_0_0) -> @out τ_0_0 {
+

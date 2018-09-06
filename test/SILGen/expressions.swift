@@ -1,7 +1,7 @@
 
 // RUN: %empty-directory(%t)
 // RUN: echo "public var x = Int()" | %target-swift-frontend -module-name FooBar -emit-module -o %t -
-// RUN: %target-swift-frontend -parse-stdlib -module-name expressions -emit-silgen -enable-sil-ownership %s -I%t -disable-access-control | %FileCheck %s
+// RUN: %target-swift-emit-silgen -parse-stdlib -module-name expressions -enable-sil-ownership %s -I%t -disable-access-control | %FileCheck %s
 
 import Swift
 import FooBar
@@ -448,11 +448,11 @@ func tuple_element(_ x: (Int, Float)) {
   // CHECK: apply
 
   int(tuple().0)
-  // CHECK: [[ZERO:%.*]] = tuple_extract {{%.*}} : {{.*}}, 0
+  // CHECK: ([[ZERO:%.*]], {{%.*}}) = destructure_tuple
   // CHECK: apply {{.*}}([[ZERO]])
 
   float(tuple().1)
-  // CHECK: [[ONE:%.*]] = tuple_extract {{%.*}} : {{.*}}, 1
+  // CHECK: ({{%.*}}, [[ONE:%.*]]) = destructure_tuple
   // CHECK: apply {{.*}}([[ONE]])
 }
 
@@ -631,7 +631,7 @@ func loadIgnoredLValueForceUnwrap(_ a: inout NonTrivialStruct) -> NonTrivialStru
 // CHECK-NEXT: // function_ref NonTrivialStruct.x.getter
 // CHECK-NEXT: [[GETTER:%[0-9]+]] = function_ref @$S{{[_0-9a-zA-Z]*}}vg : $@convention(method) (@guaranteed NonTrivialStruct) -> @owned Optional<NonTrivialStruct>
 // CHECK-NEXT: [[X:%[0-9]+]] = apply [[GETTER]]([[BORROW]])
-// CHECK-NEXT: end_borrow [[BORROW]] from [[READ]]
+// CHECK-NEXT: end_borrow [[BORROW]]
 // CHECK-NEXT: end_access [[READ]]
 // CHECK-NEXT: switch_enum [[X]] : $Optional<NonTrivialStruct>, case #Optional.some!enumelt.1: bb2, case #Optional.none!enumelt: bb1
 // CHECK: bb1:
@@ -657,7 +657,7 @@ func loadIgnoredLValueThroughForceUnwrap(_ a: inout NonTrivialStruct?) -> NonTri
 // CHECK-NEXT: // function_ref NonTrivialStruct.x.getter
 // CHECK-NEXT: [[GETTER:%[0-9]+]] = function_ref @$S{{[_0-9a-zA-Z]*}}vg : $@convention(method) (@guaranteed NonTrivialStruct) -> @owned Optional<NonTrivialStruct>
 // CHECK-NEXT: [[X:%[0-9]+]] = apply [[GETTER]]([[BORROW]])
-// CHECK-NEXT: end_borrow [[BORROW]] from [[UNWRAPPED]]
+// CHECK-NEXT: end_borrow [[BORROW]]
 // CHECK-NEXT: end_access [[READ]]
 // CHECK-NEXT: switch_enum [[X]] : $Optional<NonTrivialStruct>, case #Optional.some!enumelt.1: bb4, case #Optional.none!enumelt: bb3
 // CHECK: bb3:
@@ -702,10 +702,8 @@ func evaluateIgnoredKeyPathExpr(_ s: inout NonTrivialStruct, _ kp: WritableKeyPa
 func implodeRecursiveTuple(_ expr: ((Int, Int), Int)?) {
 
   // CHECK: bb2([[WHOLE:%.*]] : @trivial $((Int, Int), Int)):
-  // CHECK-NEXT: [[X:%[0-9]+]] = tuple_extract [[WHOLE]] : $((Int, Int), Int), 0
-  // CHECK-NEXT: [[X0:%[0-9]+]] = tuple_extract [[X]] : $(Int, Int), 0
-  // CHECK-NEXT: [[X1:%[0-9]+]] = tuple_extract [[X]] : $(Int, Int), 1
-  // CHECK-NEXT: [[Y:%[0-9]+]] = tuple_extract [[WHOLE]] : $((Int, Int), Int), 1
+  // CHECK-NEXT: ([[X:%[0-9]+]], [[Y:%[0-9]+]]) = destructure_tuple [[WHOLE]]
+  // CHECK-NEXT: ([[X0:%[0-9]+]], [[X1:%[0-9]+]]) = destructure_tuple [[X]]
   // CHECK-NEXT: [[X:%[0-9]+]] = tuple ([[X0]] : $Int, [[X1]] : $Int)
   // CHECK-NEXT: debug_value [[X]] : $(Int, Int), let, name "x"
   // CHECK-NEXT: debug_value [[Y]] : $Int, let, name "y"

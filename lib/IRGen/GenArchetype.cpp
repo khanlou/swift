@@ -49,7 +49,6 @@
 #include "ProtocolInfo.h"
 #include "ResilientTypeInfo.h"
 #include "TypeInfo.h"
-#include "WeakTypeInfo.h"
 
 using namespace swift;
 using namespace irgen;
@@ -89,7 +88,8 @@ namespace {
 class OpaqueArchetypeTypeInfo
   : public ResilientTypeInfo<OpaqueArchetypeTypeInfo>
 {
-  OpaqueArchetypeTypeInfo(llvm::Type *type) : ResilientTypeInfo(type) {}
+  OpaqueArchetypeTypeInfo(llvm::Type *type)
+    : ResilientTypeInfo(type, IsABIAccessible) {}
 
 public:
   static const OpaqueArchetypeTypeInfo *create(llvm::Type *type) {
@@ -182,7 +182,8 @@ llvm::Value *irgen::emitArchetypeWitnessTableRef(IRGenFunction &IGF,
            "non-opened archetype lacking generic environment?");
     SmallVector<ProtocolEntry, 4> entries;
     for (auto p : archetype->getConformsTo()) {
-      const ProtocolInfo &impl = IGF.IGM.getProtocolInfo(p);
+      const ProtocolInfo &impl =
+          IGF.IGM.getProtocolInfo(p, ProtocolInfoKind::RequirementSignature);
       entries.push_back(ProtocolEntry(p, impl));
     }
 
@@ -227,7 +228,9 @@ llvm::Value *irgen::emitArchetypeWitnessTableRef(IRGenFunction &IGF,
     CanType depType = CanType(entry.first);
     ProtocolDecl *requirement = entry.second;
 
-    auto &lastPI = IGF.IGM.getProtocolInfo(lastProtocol);
+    const ProtocolInfo &lastPI =
+        IGF.IGM.getProtocolInfo(lastProtocol,
+                                ProtocolInfoKind::RequirementSignature);
 
     // If it's a type parameter, it's self, and this is a base protocol
     // requirement.
@@ -287,7 +290,7 @@ const TypeInfo *TypeConverter::convertArchetypeType(ArchetypeType *archetype) {
   // representation.
   if (archetype->requiresClass() ||
       (layout && layout->isRefCounted())) {
-    auto refcount = getReferenceCountingForType(IGM, CanType(archetype));
+    auto refcount = archetype->getReferenceCounting();
 
     llvm::PointerType *reprTy;
 

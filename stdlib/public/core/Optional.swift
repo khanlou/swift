@@ -72,7 +72,7 @@
 /// optional chaining to access the `hasSuffix(_:)` method on a `String?`
 /// instance.
 ///
-///     if let isPNG = imagePaths["star"]?.hasSuffix(".png") {
+///     if imagePaths["star"]?.hasSuffix(".png") == true {
 ///         print("The star image is in PNG format")
 ///     }
 ///     // Prints "The star image is in PNG format"
@@ -133,7 +133,6 @@ public enum Optional<Wrapped> : ExpressibleByNilLiteral {
   case some(Wrapped)
 
   /// Creates an instance that stores the given value.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public init(_ some: Wrapped) { self = .some(some) }
 
@@ -210,7 +209,6 @@ public enum Optional<Wrapped> : ExpressibleByNilLiteral {
   ///
   /// In this example, the assignment to the `i` variable calls this
   /// initializer behind the scenes.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public init(nilLiteral: ()) {
     self = .none
@@ -255,8 +253,7 @@ public enum Optional<Wrapped> : ExpressibleByNilLiteral {
   /// This version is for internal stdlib use; it avoids any checking
   /// overhead for users, even in Debug builds.
   @inlinable
-  public // SPI(SwiftExperimental)
-  var _unsafelyUnwrappedUnchecked: Wrapped {
+  internal var _unsafelyUnwrappedUnchecked: Wrapped {
     @inline(__always)
     get {
       if let x = self {
@@ -269,7 +266,6 @@ public enum Optional<Wrapped> : ExpressibleByNilLiteral {
 
 extension Optional : CustomDebugStringConvertible {
   /// A textual representation of this instance, suitable for debugging.
-  @inlinable // FIXME(sil-serialize-all)
   public var debugDescription: String {
     switch self {
     case .some(let value):
@@ -284,7 +280,6 @@ extension Optional : CustomDebugStringConvertible {
 }
 
 extension Optional : CustomReflectable {
-  @inlinable // FIXME(sil-serialize-all)
   public var customMirror: Mirror {
     switch self {
     case .some(let value):
@@ -298,15 +293,17 @@ extension Optional : CustomReflectable {
   }
 }
 
-@inlinable // FIXME(sil-serialize-all)
 @_transparent
 public // COMPILER_INTRINSIC
 func _diagnoseUnexpectedNilOptional(_filenameStart: Builtin.RawPointer,
                                     _filenameLength: Builtin.Word,
                                     _filenameIsASCII: Builtin.Int1,
-                                    _line: Builtin.Word) {
+                                    _line: Builtin.Word,
+                                    _isImplicitUnwrap: Builtin.Int1) {
   _preconditionFailure(
-    "Unexpectedly found nil while unwrapping an Optional value",
+    Bool(_isImplicitUnwrap)
+      ? "Unexpectedly found nil while implicitly unwrapping an Optional value"
+      : "Unexpectedly found nil while unwrapping an Optional value",
     file: StaticString(_start: _filenameStart,
                        utf8CodeUnitCount: _filenameLength,
                        isASCII: _filenameIsASCII),
@@ -331,8 +328,8 @@ extension Optional : Equatable where Wrapped : Equatable {
   ///     }
   ///     // Prints "The two groups start the same."
   ///
-  /// You can also use this operator to compare a non-optional value to an
-  /// optional that wraps the same type. The non-optional value is wrapped as an
+  /// You can also use this operator to compare a nonoptional value to an
+  /// optional that wraps the same type. The nonoptional value is wrapped as an
   /// optional before the comparison is made. In the following example, the
   /// `numberToMatch` constant is wrapped as an optional before comparing to the
   /// optional `numberFromString`:
@@ -387,8 +384,8 @@ extension Optional : Equatable where Wrapped : Equatable {
   ///     }
   ///     // Prints "The two groups start differently."
   ///
-  /// You can also use this operator to compare a non-optional value to an
-  /// optional that wraps the same type. The non-optional value is wrapped as an
+  /// You can also use this operator to compare a nonoptional value to an
+  /// optional that wraps the same type. The nonoptional value is wrapped as an
   /// optional before the comparison is made. In this example, the
   /// `numberToMatch` constant is wrapped as an optional before comparing to the
   /// optional `numberFromString`:
@@ -410,19 +407,13 @@ extension Optional : Equatable where Wrapped : Equatable {
 }
 
 extension Optional: Hashable where Wrapped: Hashable {
-  /// The hash value for the optional instance.
+  /// Hashes the essential components of this value by feeding them into the
+  /// given hasher.
   ///
-  /// Two optionals that are equal will always have equal hash values.
-  ///
-  /// Hash values are not guaranteed to be equal across different executions of
-  /// your program. Do not save hash values to use during a future execution.
-  @inlinable // FIXME(sil-serialize-all)
-  public var hashValue: Int {
-    return _hashValue(for: self)
-  }
-
-  @inlinable // FIXME(sil-serialize-all)
-  public func _hash(into hasher: inout _Hasher) {
+  /// - Parameter hasher: The hasher to use when combining the components
+  ///   of this instance.
+  @inlinable
+  public func hash(into hasher: inout Hasher) {
     switch self {
     case .none:
       hasher.combine(0 as UInt8)
@@ -438,7 +429,6 @@ extension Optional: Hashable where Wrapped: Hashable {
 @_fixed_layout
 public struct _OptionalNilComparisonType : ExpressibleByNilLiteral {
   /// Create an instance initialized with `nil`.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public init(nilLiteral: ()) {
   }
@@ -475,11 +465,10 @@ extension Optional {
   /// - Parameters:
   ///   - lhs: A `nil` literal.
   ///   - rhs: A value to match against `nil`.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public static func ~=(lhs: _OptionalNilComparisonType, rhs: Wrapped?) -> Bool {
     switch rhs {
-    case .some(_):
+    case .some:
       return false
     case .none:
       return true
@@ -510,11 +499,10 @@ extension Optional {
   /// - Parameters:
   ///   - lhs: A value to compare to `nil`.
   ///   - rhs: A `nil` literal.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public static func ==(lhs: Wrapped?, rhs: _OptionalNilComparisonType) -> Bool {
     switch lhs {
-    case .some(_):
+    case .some:
       return false
     case .none:
       return true
@@ -542,11 +530,10 @@ extension Optional {
   /// - Parameters:
   ///   - lhs: A value to compare to `nil`.
   ///   - rhs: A `nil` literal.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public static func !=(lhs: Wrapped?, rhs: _OptionalNilComparisonType) -> Bool {
     switch lhs {
-    case .some(_):
+    case .some:
       return true
     case .none:
       return false
@@ -574,11 +561,10 @@ extension Optional {
   /// - Parameters:
   ///   - lhs: A `nil` literal.
   ///   - rhs: A value to compare to `nil`.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public static func ==(lhs: _OptionalNilComparisonType, rhs: Wrapped?) -> Bool {
     switch rhs {
-    case .some(_):
+    case .some:
       return false
     case .none:
       return true
@@ -606,11 +592,10 @@ extension Optional {
   /// - Parameters:
   ///   - lhs: A `nil` literal.
   ///   - rhs: A value to compare to `nil`.
-  @inlinable // FIXME(sil-serialize-all)
   @_transparent
   public static func !=(lhs: _OptionalNilComparisonType, rhs: Wrapped?) -> Bool {
     switch rhs {
-    case .some(_):
+    case .some:
       return true
     case .none:
       return false
@@ -650,7 +635,6 @@ extension Optional {
 ///   - optional: An optional value.
 ///   - defaultValue: A value to use as a default. `defaultValue` is the same
 ///     type as the `Wrapped` type of `optional`.
-@inlinable // FIXME(sil-serialize-all)
 @_transparent
 public func ?? <T>(optional: T?, defaultValue: @autoclosure () throws -> T)
     rethrows -> T {
@@ -697,14 +681,13 @@ public func ?? <T>(optional: T?, defaultValue: @autoclosure () throws -> T)
 ///
 /// If `userPrefs[greetingKey]` has a value, that value is assigned to
 /// `greeting`. If not, any value in `defaults[greetingKey]` will succeed, and
-/// if not that, `greeting` will be set to the non-optional default value,
+/// if not that, `greeting` will be set to the nonoptional default value,
 /// `"Greetings!"`.
 ///
 /// - Parameters:
 ///   - optional: An optional value.
 ///   - defaultValue: A value to use as a default. `defaultValue` and
 ///     `optional` have the same type.
-@inlinable // FIXME(sil-serialize-all)
 @_transparent
 public func ?? <T>(optional: T?, defaultValue: @autoclosure () throws -> T?)
     rethrows -> T? {

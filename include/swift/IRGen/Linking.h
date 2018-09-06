@@ -14,6 +14,7 @@
 #define SWIFT_IRGEN_LINKING_H
 
 #include "swift/AST/Decl.h"
+#include "swift/AST/Module.h"
 #include "swift/AST/ProtocolAssociations.h"
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/Types.h"
@@ -45,7 +46,7 @@ public:
 
   bool IsWholeModule;
 
-  UniversalLinkageInfo(IRGenModule &IGM);
+  explicit UniversalLinkageInfo(IRGenModule &IGM);
 
   UniversalLinkageInfo(const llvm::Triple &triple, bool hasMultipleIGMs,
                        bool isWholeModule);
@@ -116,6 +117,18 @@ class LinkEntity {
     /// ConstructorDecl* inside a protocol or a class.
     DispatchThunkAllocator,
 
+    /// A method descriptor.  The pointer is a FuncDecl* inside a protocol
+    /// or a class.
+    MethodDescriptor,
+
+    /// A method descriptor for an initializing constructor.  The pointer
+    /// is a ConstructorDecl* inside a class.
+    MethodDescriptorInitializer,
+
+    /// A method descriptor for an allocating constructor.  The pointer is a
+    /// ConstructorDecl* inside a protocol or a class.
+    MethodDescriptorAllocator,
+
     /// A resilient enum tag index. The pointer is a EnumElementDecl*.
     EnumCase,
 
@@ -162,6 +175,10 @@ class LinkEntity {
     /// The pointer is a NominalTypeDecl*.
     TypeMetadataInstantiationFunction,
 
+    /// The in-place initialization cache for a generic nominal type.
+    /// The pointer is a NominalTypeDecl*.
+    TypeMetadataSingletonInitializationCache,
+
     /// The completion function for a generic or resilient nominal type.
     /// The pointer is a NominalTypeDecl*.
     TypeMetadataCompletionFunction,
@@ -173,10 +190,6 @@ class LinkEntity {
     /// The protocol descriptor for a protocol type.
     /// The pointer is a ProtocolDecl*.
     ProtocolDescriptor,
-
-    /// An array of protocol requirement descriptors for a protocol.
-    /// The pointer is a ProtocolDecl*.
-    ProtocolRequirementArray,
 
     /// A SIL function. The pointer is a SILFunction*.
     SILFunction,
@@ -291,7 +304,7 @@ class LinkEntity {
   }
 
   static bool isDeclKind(Kind k) {
-    return k <= Kind::ProtocolRequirementArray;
+    return k <= Kind::ProtocolDescriptor;
   }
   static bool isTypeKind(Kind k) {
     return k >= Kind::ProtocolWitnessTableLazyAccessFunction;
@@ -411,18 +424,22 @@ class LinkEntity {
 
   LinkEntity() = default;
 
-public:
-  static LinkEntity forDispatchThunk(SILDeclRef declRef) {
-    assert(!declRef.isForeign &&
-           !declRef.isDirectReference &&
-           !declRef.isCurried);
-
-    LinkEntity::Kind kind;
+  static bool isValidResilientMethodRef(SILDeclRef declRef) {
+    if (declRef.isForeign ||
+        declRef.isDirectReference ||
+        declRef.isCurried)
+      return false;
 
     auto *decl = declRef.getDecl();
-    assert(isa<ClassDecl>(decl->getDeclContext()) ||
-           isa<ProtocolDecl>(decl->getDeclContext()));
+    return (isa<ClassDecl>(decl->getDeclContext()) ||
+            isa<ProtocolDecl>(decl->getDeclContext()));
+  }
 
+public:
+  static LinkEntity forDispatchThunk(SILDeclRef declRef) {
+    assert(isValidResilientMethodRef(declRef));
+
+    LinkEntity::Kind kind;
     switch (declRef.kind) {
     case SILDeclRef::Kind::Func:
       kind = Kind::DispatchThunk;
@@ -438,7 +455,30 @@ public:
     }
 
     LinkEntity entity;
-    entity.setForDecl(kind, decl);
+    entity.setForDecl(kind, declRef.getDecl());
+    return entity;
+  }
+
+  static LinkEntity forMethodDescriptor(SILDeclRef declRef) {
+    assert(isValidResilientMethodRef(declRef));
+
+    LinkEntity::Kind kind;
+    switch (declRef.kind) {
+    case SILDeclRef::Kind::Func:
+      kind = Kind::MethodDescriptor;
+      break;
+    case SILDeclRef::Kind::Initializer:
+      kind = Kind::MethodDescriptorInitializer;
+      break;
+    case SILDeclRef::Kind::Allocator:
+      kind = Kind::MethodDescriptorAllocator;
+      break;
+    default:
+      llvm_unreachable("Bad SILDeclRef for method descriptor");
+    }
+
+    LinkEntity entity;
+    entity.setForDecl(kind, declRef.getDecl());
     return entity;
   }
 
@@ -506,9 +546,16 @@ public:
     return entity;
   }
 
-  static LinkEntity forTypeMetadataInstantiationFunction(NominalTypeDecl *decl){
+  static LinkEntity forTypeMetadataInstantiationFunction(NominalTypeDecl *decl) {
     LinkEntity entity;
     entity.setForDecl(Kind::TypeMetadataInstantiationFunction, decl);
+    return entity;
+  }
+
+  static LinkEntity forTypeMetadataSingletonInitializationCache(
+                                                      NominalTypeDecl *decl) {
+    LinkEntity entity;
+    entity.setForDecl(Kind::TypeMetadataSingletonInitializationCache, decl);
     return entity;
   }
 
@@ -575,12 +622,6 @@ public:
   static LinkEntity forProtocolDescriptor(ProtocolDecl *decl) {
     LinkEntity entity;
     entity.setForDecl(Kind::ProtocolDescriptor, decl);
-    return entity;
-  }
-
-  static LinkEntity forProtocolRequirementArray(ProtocolDecl *decl) {
-    LinkEntity entity;
-    entity.setForDecl(Kind::ProtocolRequirementArray, decl);
     return entity;
   }
 
@@ -844,17 +885,15 @@ class LinkInfo {
 
 public:
   /// Compute linkage information for the given
+  static LinkInfo get(IRGenModule &IGM, const LinkEntity &entity,
+                      ForDefinition_t forDefinition);
+
   static LinkInfo get(const UniversalLinkageInfo &linkInfo,
                       ModuleDecl *swiftModule, const LinkEntity &entity,
                       ForDefinition_t forDefinition);
 
-  static LinkInfo get(IRGenModule &IGM, const LinkEntity &entity,
-                      ForDefinition_t forDefinition);
-  
-  static LinkInfo get(const UniversalLinkageInfo &linkInfo,
-                      StringRef name,
-                      SILLinkage linkage,
-                      ForDefinition_t isDefinition,
+  static LinkInfo get(const UniversalLinkageInfo &linkInfo, StringRef name,
+                      SILLinkage linkage, ForDefinition_t isDefinition,
                       bool isWeakImported);
 
   StringRef getName() const {
@@ -881,6 +920,9 @@ public:
                      llvm::GlobalValue::VisibilityTypes Visibility,
                      llvm::GlobalValue::DLLStorageClassTypes DLLStorage);
 };
+
+StringRef encodeForceLoadSymbolName(llvm::SmallVectorImpl<char> &buf,
+                                    StringRef name);
 }
 }
 
@@ -911,5 +953,4 @@ template <> struct llvm::DenseMapInfo<swift::irgen::LinkEntity> {
            LHS.SecondaryPointer == RHS.SecondaryPointer && LHS.Data == RHS.Data;
   }
 };
-
 #endif

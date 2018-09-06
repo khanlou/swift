@@ -138,6 +138,7 @@ protected:
   const TypeInfo *TI = nullptr;
   TypeInfoKind TIK;
   IsFixedSize_t AlwaysFixedSize;
+  IsABIAccessible_t ElementsAreABIAccessible;
   unsigned NumElements;
   
   EnumImplStrategy(IRGenModule &IGM,
@@ -145,12 +146,7 @@ protected:
                    IsFixedSize_t alwaysFixedSize,
                    unsigned NumElements,
                    std::vector<Element> &&ElementsWithPayload,
-                   std::vector<Element> &&ElementsWithNoPayload)
-  : ElementsWithPayload(std::move(ElementsWithPayload)),
-    ElementsWithNoPayload(std::move(ElementsWithNoPayload)),
-    IGM(IGM), TIK(tik), AlwaysFixedSize(alwaysFixedSize),
-    NumElements(NumElements)
-  {}
+                   std::vector<Element> &&ElementsWithNoPayload);
   
   /// Save the TypeInfo created for the enum.
   TypeInfo *registerEnumTypeInfo(TypeInfo *mutableTI) {
@@ -379,11 +375,13 @@ public:
 
   virtual llvm::Value *getExtraInhabitantIndex(IRGenFunction &IGF,
                                                Address src,
-                                               SILType T) const = 0;
+                                               SILType T,
+                                               bool isOutlined) const = 0;
   virtual void storeExtraInhabitant(IRGenFunction &IGF,
                                     llvm::Value *index,
                                     Address dest,
-                                    SILType T) const = 0;
+                                    SILType T,
+                                    bool isOutlined) const = 0;
   
   /// \group Delegated FixedTypeInfo operations
   
